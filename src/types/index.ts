@@ -24,6 +24,7 @@ export interface LaporanBimbel {
   mata_pelajaran: string
   topik: string
   ringkasan: string
+  foto_kegiatan_url?: string | null
   created_at?: string
   // Join properties
   tutor?: {

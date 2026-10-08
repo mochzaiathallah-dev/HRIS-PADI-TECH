@@ -29,6 +29,24 @@ CREATE TABLE IF NOT EXISTS public.users_profile (
 -- Pastikan kolom email ada
 ALTER TABLE public.users_profile ADD COLUMN IF NOT EXISTS email TEXT;
 
+-- Pastikan kolom foto_kegiatan_url ada di laporan_bimbel
+ALTER TABLE public.laporan_bimbel ADD COLUMN IF NOT EXISTS foto_kegiatan_url TEXT;
+
+-- Pastikan tabel system_heartbeat aktif untuk anti-pause database midnight
+CREATE TABLE IF NOT EXISTS public.system_heartbeat (
+    id SERIAL PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'alive',
+    pinged_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+ALTER TABLE public.system_heartbeat ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Heartbeat access policy" ON public.system_heartbeat;
+CREATE POLICY "Heartbeat access policy"
+ON public.system_heartbeat FOR ALL
+USING (true)
+WITH CHECK (true);
+
 -- ------------------------------------------------------------------------------
 -- 2. HELPER IS_OWNER (Security Definer)
 -- ------------------------------------------------------------------------------

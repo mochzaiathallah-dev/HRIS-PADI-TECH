@@ -43,8 +43,11 @@ CREATE TABLE IF NOT EXISTS public.laporan_bimbel (
     mata_pelajaran TEXT NOT NULL,
     topik TEXT NOT NULL,
     ringkasan TEXT NOT NULL,
+    foto_kegiatan_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
+
+ALTER TABLE public.laporan_bimbel ADD COLUMN IF NOT EXISTS foto_kegiatan_url TEXT;
 
 -- 6. TABEL LAPORAN_TIKTOK (Pencatatan Metrik Live Commerce Host)
 CREATE TABLE IF NOT EXISTS public.laporan_tiktok (

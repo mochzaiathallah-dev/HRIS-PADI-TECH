@@ -13,6 +13,8 @@ import { EditTikTokModal } from '@/components/dashboard/EditTikTokModal'
 import { AddMuridModal } from '@/components/dashboard/AddMuridModal'
 import { EditMuridModal } from '@/components/dashboard/EditMuridModal'
 import { DeleteConfirmModal } from '@/components/dashboard/DeleteConfirmModal'
+import { AiAssistantModal } from '@/components/ai/AiAssistantModal'
+import { setupMidnightHeartbeatWatcher } from '@/lib/heartbeat'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -119,6 +121,7 @@ export const DashboardPage: React.FC = () => {
           mata_pelajaran,
           topik,
           ringkasan,
+          foto_kegiatan_url,
           created_at,
           tutor:tutor_id ( nama ),
           murid:murid_id ( nama, tingkat_kelas )
@@ -175,6 +178,7 @@ export const DashboardPage: React.FC = () => {
   // 2. Realtime WebSocket Listener (Zero-Compute Realtime Sync on 4 Tables)
   useEffect(() => {
     fetchData()
+    const cleanupHeartbeat = setupMidnightHeartbeatWatcher()
 
     const channel = supabase
       .channel('realtime_owner_full_sync')
@@ -201,6 +205,7 @@ export const DashboardPage: React.FC = () => {
       .subscribe()
 
     return () => {
+      cleanupHeartbeat()
       supabase.removeChannel(channel)
     }
   }, [fetchData])
@@ -871,6 +876,17 @@ export const DashboardPage: React.FC = () => {
                           </td>
                           <td className="p-3 text-right whitespace-nowrap">
                             <div className="flex items-center justify-end gap-1.5">
+                              {item.foto_kegiatan_url && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setPreviewImage(item.foto_kegiatan_url!)}
+                                  className="h-7 w-7 p-0 text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400"
+                                  title="Lihat Foto Dokumentasi Mengajar"
+                                >
+                                  <ImageIcon className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1419,8 +1435,12 @@ export const DashboardPage: React.FC = () => {
           <div className="relative max-w-2xl w-full bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800">
             <div className="p-3 border-b flex items-center justify-between">
               <div className="text-xs font-semibold flex items-center gap-1.5">
-                <ImageIcon className="h-4 w-4 text-pink-500" />
-                <span>Foto Bukti Screenshot GMV / Live TikTok</span>
+                <ImageIcon className={`h-4 w-4 ${previewImage?.includes('bimbel') ? 'text-blue-500' : 'text-pink-500'}`} />
+                <span>
+                  {previewImage?.includes('bimbel')
+                    ? 'Foto Dokumentasi Kegiatan Belajar'
+                    : 'Foto Bukti Screenshot GMV / Live TikTok'}
+                </span>
               </div>
               <Button
                 variant="ghost"
@@ -1441,6 +1461,8 @@ export const DashboardPage: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Floating AI Assistant Trigger & Modal */}
+      <AiAssistantModal />
     </div>
   )
 }
