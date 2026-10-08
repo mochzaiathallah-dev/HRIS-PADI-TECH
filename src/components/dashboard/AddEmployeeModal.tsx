@@ -74,34 +74,7 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
       const emailClean = values.email.trim().toLowerCase()
       const namaClean = values.nama.trim()
 
-      // Step 1: Coba via Database Function (Bypass Email Rate Limit & Instan)
-      const { data: rpcData, error: rpcError } = await supabase.rpc('owner_create_employee', {
-        p_email: emailClean,
-        p_nama: namaClean,
-        p_password: values.password,
-        p_role: values.role,
-      })
-
-      if (!rpcError && rpcData?.success) {
-        setSuccessMessage(
-          `Karyawan ${namaClean} berhasil didaftarkan sebagai ${
-            values.role === 'tutor' ? 'Tutor Bimbel' : 'Host TikTok Live'
-          }!`
-        )
-        reset()
-        setTimeout(() => {
-          onSuccess()
-          onClose()
-        }, 1500)
-        return
-      }
-
-      // Jika RPC error bukan karena function tidak ada, lemparkan error aslinya
-      if (rpcError && !rpcError.message.includes('schema cache') && !rpcError.code?.includes('PGRST202')) {
-        throw new Error(rpcError.message)
-      }
-
-      // Step 2: Fallback ke Supabase Auth SignUp jika RPC belum terpasang di database
+      // Menggunakan Supabase Auth SignUp resmi (Bebas error skema & 100% kompatibel dengan GoTrue)
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
       const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
@@ -125,11 +98,6 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
       })
 
       if (signUpError) {
-        if (signUpError.message.toLowerCase().includes('rate limit')) {
-          throw new Error(
-            'Batas kirim email Supabase tercapai (rate limit). Silakan jalankan script SQL di file "supabase/quick_fix_employee_rpc.sql" melalui menu SQL Editor Supabase agar pendaftaran karyawan bisa langsung tersimpan instan tanpa batasan email!'
-          )
-        }
         if (signUpError.message.includes('already registered')) {
           throw new Error(`Email ${emailClean} sudah terdaftar di sistem. Gunakan email lain!`)
         }
