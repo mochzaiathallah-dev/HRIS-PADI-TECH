@@ -3,6 +3,13 @@ import { User, Session } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { UserProfile, UserRole } from '@/types'
 
+interface SignInResult {
+  error: Error | null
+  user?: User | null
+  profile?: UserProfile | null
+  role?: UserRole | null
+}
+
 interface AuthContextType {
   user: User | null
   session: Session | null
@@ -10,7 +17,7 @@ interface AuthContextType {
   role: UserRole | null
   isLoading: boolean
   isAuthenticated: boolean
-  signInWithPassword: (email: string, password: string) => Promise<{ error: Error | null }>
+  signInWithPassword: (email: string, password: string) => Promise<SignInResult>
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
 }
@@ -23,24 +30,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [isLoading, setIsLoading] = useState<boolean>(true)
 
-  const fetchProfile = useCallback(async (userId: string) => {
+  // Fetch profile from public.users_profile with fallback to auth metadata
+  const fetchProfile = useCallback(async (userId: string, authUser?: User | null) => {
     try {
       const { data, error } = await supabase
         .from('users_profile')
         .select('*')
         .eq('id', userId)
-        .single()
+        .maybeSingle()
 
       if (error) {
-        console.warn('Profile fetch warning (profile might not be created yet):', error.message)
-        // Fallback: Default to tutor if not found immediately
-        setProfile(null)
-      } else if (data) {
-        setProfile(data as UserProfile)
+        console.warn('Profile fetch note:', error.message)
+      }
+
+      if (data) {
+        const loadedProfile = data as UserProfile
+        setProfile(loadedProfile)
+        return loadedProfile
+      } else {
+        // Fallback: If not in public.users_profile yet, construct from auth metadata
+        const metadataRole = (authUser?.user_metadata?.role as UserRole) || 'tutor'
+        const metadataNama = authUser?.user_metadata?.nama || authUser?.email?.split('@')[0] || 'Karyawan'
+        const fallbackProfile: UserProfile = {
+          id: userId,
+          nama: metadataNama,
+          email: authUser?.email,
+          role: metadataRole,
+        }
+        setProfile(fallbackProfile)
+
+        // Asynchronously upsert profile to DB
+        supabase
+          .from('users_profile')
+          .upsert({
+            id: userId,
+            nama: metadataNama,
+            email: authUser?.email,
+            role: metadataRole,
+          })
+          .then(() => {})
+
+        return fallbackProfile
       }
     } catch (err) {
       console.error('Unexpected error fetching profile:', err)
-      setProfile(null)
+      return null
     }
   }, [])
 
@@ -57,7 +91,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setSession(initialSession)
           setUser(initialSession?.user ?? null)
           if (initialSession?.user) {
-            await fetchProfile(initialSession.user.id)
+            await fetchProfile(initialSession.user.id, initialSession.user)
           }
         }
       } catch (error) {
@@ -80,7 +114,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(currentSession?.user ?? null)
 
         if (currentSession?.user) {
-          await fetchProfile(currentSession.user.id)
+          await fetchProfile(currentSession.user.id, currentSession.user)
         } else {
           setProfile(null)
         }
@@ -88,18 +122,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     )
 
-    // 3. Cleanup listener on unmount to prevent memory leaks
+    // 3. Cleanup listener on unmount
     return () => {
       isMounted = false
       subscription.unsubscribe()
     }
   }, [fetchProfile])
 
-  const signInWithPassword = async (email: string, password: string) => {
+  const signInWithPassword = async (email: string, password: string): Promise<SignInResult> => {
     setIsLoading(true)
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim().toLowerCase(),
         password,
       })
 
@@ -110,7 +144,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (data.user) {
         setUser(data.user)
         setSession(data.session)
-        await fetchProfile(data.user.id)
+        const loadedProfile = await fetchProfile(data.user.id, data.user)
+        const effectiveRole = loadedProfile?.role || (data.user.user_metadata?.role as UserRole) || 'tutor'
+        return {
+          error: null,
+          user: data.user,
+          profile: loadedProfile,
+          role: effectiveRole,
+        }
       }
 
       return { error: null }
@@ -137,15 +178,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshProfile = async () => {
     if (user?.id) {
-      await fetchProfile(user.id)
+      await fetchProfile(user.id, user)
     }
   }
+
+  // Effective role computation: profile.role > user.user_metadata.role > null
+  const effectiveRole: UserRole | null =
+    profile?.role || (user?.user_metadata?.role as UserRole) || null
 
   const value: AuthContextType = {
     user,
     session,
     profile,
-    role: profile?.role ?? null,
+    role: effectiveRole,
     isLoading,
     isAuthenticated: !!user,
     signInWithPassword,

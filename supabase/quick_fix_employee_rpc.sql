@@ -1,16 +1,32 @@
 -- ==============================================================================
--- HRIS PADI TECH - MASTER DATABASE SETUP & FULL EMAIL SYNC
+-- HRIS PADI TECH - MASTER DATABASE SETUP & ROLE AUTHENTICATION FIX
 -- ==============================================================================
--- Skrip ini:
--- 1. Menambahkan kolom 'email' di tabel public.users_profile
--- 2. Mengisi dan menyinkronkan seluruh email dari auth.users ke public.users_profile
--- 3. Memperbarui fungsi pendaftaran & trigger agar selalu menyimpan email secara otomatis
+-- Script ini memperbaiki otentikasi login karyawan & owner, memastikan setiap
+-- role (Owner, Tutor Bimbel, Host TikTok Live) tersimpan dengan benar di DB Supabase
+-- dan bisa login langsung tanpa kendala konfirmasi email atau skema error.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ------------------------------------------------------------------------------
--- 1. TAMBAH KOLOM EMAIL DI USERS_PROFILE
+-- 1. ENUM ROLE & TABEL USERS_PROFILE
 -- ------------------------------------------------------------------------------
+DO $$ BEGIN
+    CREATE TYPE user_role AS ENUM ('owner', 'tutor', 'host');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS public.users_profile (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    nama TEXT NOT NULL,
+    email TEXT,
+    role user_role NOT NULL DEFAULT 'tutor',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+-- Pastikan kolom email ada
 ALTER TABLE public.users_profile ADD COLUMN IF NOT EXISTS email TEXT;
 
 -- ------------------------------------------------------------------------------
@@ -30,7 +46,33 @@ AS $$
 $$;
 
 -- ------------------------------------------------------------------------------
--- 3. TRIGGER AUTO-SYNC AUTH.USERS -> USERS_PROFILE (DENGAN EMAIL)
+-- 3. TRIGGER AUTO-CONFIRM EMAIL SEBELUM INSERT KE AUTH.USERS
+-- ------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.auto_confirm_auth_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+BEGIN
+    NEW.email_confirmed_at := COALESCE(NEW.email_confirmed_at, now());
+    NEW.aud := COALESCE(NEW.aud, 'authenticated');
+    NEW.role := COALESCE(NEW.role, 'authenticated');
+    NEW.is_sso_user := COALESCE(NEW.is_sso_user, false);
+    NEW.is_anonymous := COALESCE(NEW.is_anonymous, false);
+    NEW.raw_app_meta_data := COALESCE(NEW.raw_app_meta_data, '{"provider":"email","providers":["email"]}'::jsonb);
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_before_insert ON auth.users;
+CREATE TRIGGER on_auth_user_before_insert
+    BEFORE INSERT ON auth.users
+    FOR EACH ROW
+    EXECUTE FUNCTION public.auto_confirm_auth_user();
+
+-- ------------------------------------------------------------------------------
+-- 4. TRIGGER AUTO-SYNC AUTH.USERS -> PUBLIC.USERS_PROFILE
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
@@ -77,7 +119,34 @@ CREATE TRIGGER on_auth_user_created
     EXECUTE FUNCTION public.handle_new_user();
 
 -- ------------------------------------------------------------------------------
--- 4. FUNGSI OWNER DAFTAR KARYAWAN (DENGAN EMAIL DISIMPAN LENGKAP)
+-- 5. TRIGGER SYNC PROFILE KE AUTH USER METADATA (Saat Owner Edit di Dashboard)
+-- ------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.sync_profile_to_auth()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+BEGIN
+    UPDATE auth.users
+    SET raw_user_meta_data = jsonb_build_object(
+        'nama', NEW.nama,
+        'role', NEW.role::text
+    ),
+    updated_at = now()
+    WHERE id = NEW.id;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_users_profile_updated ON public.users_profile;
+CREATE TRIGGER on_users_profile_updated
+    AFTER UPDATE ON public.users_profile
+    FOR EACH ROW
+    EXECUTE FUNCTION public.sync_profile_to_auth();
+
+-- ------------------------------------------------------------------------------
+-- 6. FUNGSI OWNER DAFTAR KARYAWAN (FULL STANDALONE & ZERO FAILURE)
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.owner_create_employee(
     p_email TEXT,
@@ -117,16 +186,36 @@ BEGIN
         RAISE EXCEPTION 'Password minimal 6 karakter!';
     END IF;
 
-    -- Cek jika akun sudah ada di auth.users sebelumnya (Self-healing)
+    -- Cek jika akun sudah ada di auth.users sebelumnya (Self-healing update)
     SELECT id INTO existing_user_id FROM auth.users WHERE email = clean_email;
 
     IF existing_user_id IS NOT NULL THEN
         UPDATE auth.users
         SET encrypted_password = crypt(p_password, gen_salt('bf')),
             raw_user_meta_data = jsonb_build_object('nama', p_nama, 'role', target_role::text),
+            raw_app_meta_data = '{"provider":"email","providers":["email"]}'::jsonb,
             email_confirmed_at = COALESCE(email_confirmed_at, now()),
+            aud = 'authenticated',
+            role = 'authenticated',
+            is_sso_user = false,
+            is_anonymous = false,
             updated_at = now()
         WHERE id = existing_user_id;
+
+        DELETE FROM auth.identities WHERE user_id = existing_user_id;
+        
+        INSERT INTO auth.identities (
+            id, user_id, identity_data, provider,
+            last_sign_in_at, created_at, updated_at, provider_id
+        )
+        VALUES (
+            existing_user_id::text,
+            existing_user_id,
+            jsonb_build_object('sub', existing_user_id::text, 'email', clean_email, 'email_verified', true, 'phone_verified', false),
+            'email',
+            now(), now(), now(),
+            existing_user_id::text
+        );
 
         INSERT INTO public.users_profile (id, nama, email, role)
         VALUES (existing_user_id, p_nama, clean_email, target_role)
@@ -152,7 +241,8 @@ BEGIN
         id, instance_id, aud, role, email,
         encrypted_password, email_confirmed_at,
         raw_app_meta_data, raw_user_meta_data,
-        created_at, updated_at, confirmation_token
+        created_at, updated_at, confirmation_token,
+        is_sso_user, is_anonymous
     )
     VALUES (
         new_user_id,
@@ -165,17 +255,20 @@ BEGIN
         '{"provider":"email","providers":["email"]}'::jsonb,
         jsonb_build_object('nama', p_nama, 'role', target_role::text),
         now(), now(),
-        encode(gen_random_bytes(32), 'hex')
+        encode(gen_random_bytes(32), 'hex'),
+        false, false
     );
+
+    DELETE FROM auth.identities WHERE user_id = new_user_id;
 
     INSERT INTO auth.identities (
         id, user_id, identity_data, provider,
         last_sign_in_at, created_at, updated_at, provider_id
     )
     VALUES (
-        gen_random_uuid(),
+        new_user_id::text,
         new_user_id,
-        jsonb_build_object('sub', new_user_id::text, 'email', clean_email),
+        jsonb_build_object('sub', new_user_id::text, 'email', clean_email, 'email_verified', true, 'phone_verified', false),
         'email',
         now(), now(), now(),
         new_user_id::text
@@ -201,7 +294,7 @@ END;
 $$;
 
 -- ------------------------------------------------------------------------------
--- 5. FUNGSI SINKRONISASI SEMUA USER & EMAIL DARI AUTH KE USERS_PROFILE
+-- 7. FUNGSI SINKRONISASI TOTAL SEMUA USER AUTH KE USERS_PROFILE
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.sync_all_auth_users()
 RETURNS JSONB
@@ -232,6 +325,31 @@ BEGIN
 
         v_email := lower(trim(r.email));
 
+        -- Auto-confirm email jika belum
+        UPDATE auth.users
+        SET email_confirmed_at = COALESCE(email_confirmed_at, now()),
+            aud = 'authenticated',
+            role = 'authenticated',
+            is_sso_user = false,
+            is_anonymous = false,
+            raw_app_meta_data = '{"provider":"email","providers":["email"]}'::jsonb
+        WHERE id = r.id;
+
+        -- Pastikan identities terhubung
+        DELETE FROM auth.identities WHERE user_id = r.id;
+        INSERT INTO auth.identities (
+            id, user_id, identity_data, provider,
+            last_sign_in_at, created_at, updated_at, provider_id
+        )
+        VALUES (
+            r.id::text,
+            r.id,
+            jsonb_build_object('sub', r.id::text, 'email', v_email, 'email_verified', true, 'phone_verified', false),
+            'email',
+            now(), now(), now(),
+            r.id::text
+        );
+
         INSERT INTO public.users_profile (id, nama, email, role)
         VALUES (r.id, v_nama, v_email, v_role)
         ON CONFLICT (id) DO UPDATE
@@ -250,11 +368,8 @@ BEGIN
 END;
 $$;
 
--- Jalankan sinkronisasi sekarang agar semua email langsung terisi
-SELECT public.sync_all_auth_users();
-
 -- ------------------------------------------------------------------------------
--- 6. FUNGSI RESET SANDI & HAPUS KARYAWAN
+-- 8. FUNGSI RESET SANDI & HAPUS KARYAWAN
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.owner_reset_employee_password(
     p_user_id UUID,
@@ -276,6 +391,7 @@ BEGIN
 
     UPDATE auth.users
     SET encrypted_password = crypt(p_new_password, gen_salt('bf')),
+        email_confirmed_at = COALESCE(email_confirmed_at, now()),
         updated_at = now()
     WHERE id = p_user_id;
 
@@ -321,7 +437,7 @@ END;
 $$;
 
 -- ------------------------------------------------------------------------------
--- 7. RLS POLICIES & REALTIME
+-- 9. RLS POLICIES
 -- ------------------------------------------------------------------------------
 ALTER TABLE public.users_profile ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Owner can manage all profiles" ON public.users_profile;
@@ -335,8 +451,11 @@ DO $$ BEGIN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.users_profile;
 EXCEPTION WHEN OTHERS THEN null; END $$;
 
--- Berikan izin akses eksekusi
+-- Berikan izin akses eksekusi ke authenticated users
 GRANT EXECUTE ON FUNCTION public.owner_create_employee(TEXT, TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.owner_reset_employee_password(UUID, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.owner_delete_employee(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.sync_all_auth_users() TO authenticated;
+
+-- Jalankan perbaikan sinkronisasi sekarang
+SELECT public.sync_all_auth_users();

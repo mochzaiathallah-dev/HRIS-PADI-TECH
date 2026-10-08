@@ -150,6 +150,7 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
         .upsert({
           id: signUpData.user.id,
           nama: namaClean,
+          email: emailClean,
           role: values.role as UserRole,
         })
 

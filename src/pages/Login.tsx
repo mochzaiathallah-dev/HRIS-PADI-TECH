@@ -2,7 +2,9 @@ import React, { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
+import { getDashboardPathForRole } from '@/components/auth/ProtectedRoute'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,6 +21,7 @@ type LoginFormValues = z.infer<typeof loginSchema>
 
 export const LoginPage: React.FC = () => {
   const { signInWithPassword } = useAuth()
+  const navigate = useNavigate()
   const [showPassword, setShowPassword] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -39,15 +42,20 @@ export const LoginPage: React.FC = () => {
     setErrorMessage(null)
     setIsSubmitting(true)
     try {
-      const { error } = await signInWithPassword(values.email, values.password)
+      const { error, role: loggedInRole } = await signInWithPassword(values.email, values.password)
       if (error) {
         if (error.message.includes('Invalid login credentials')) {
           setErrorMessage('Email atau kata sandi tidak sesuai. Silakan periksa kembali.')
-        } else if (error.message.includes('Email not confirmed')) {
-          setErrorMessage('Email belum dikonfirmasi. Silakan periksa kotak masuk email Anda.')
+        } else if (error.message.toLowerCase().includes('email not confirmed') || error.message.toLowerCase().includes('email_not_confirmed')) {
+          setErrorMessage('Email belum dikonfirmasi atau memerlukan sinkronisasi. Silakan hubungi Owner.')
+        } else if (error.message.includes('Database error querying schema')) {
+          setErrorMessage('Terjadi kendala skema otentikasi Supabase. Silakan jalankan script perbaikan SQL di menu SQL Editor Supabase.')
         } else {
           setErrorMessage(error.message)
         }
+      } else {
+        // Langsung navigasikan ke dashboard sesuai role yang terdeteksi
+        navigate(getDashboardPathForRole(loggedInRole), { replace: true })
       }
     } catch {
       setErrorMessage('Terjadi kesalahan jaringan saat mencoba login.')

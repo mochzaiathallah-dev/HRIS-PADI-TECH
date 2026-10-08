@@ -9,11 +9,11 @@ interface ProtectedRouteProps {
   allowedRoles?: UserRole[]
 }
 
-export function getDashboardPathForRole(role: UserRole | null): string {
+export function getDashboardPathForRole(role: UserRole | null | undefined): string {
   if (role === 'owner') return '/dashboard'
   if (role === 'tutor') return '/dashboard-tutor'
   if (role === 'host') return '/dashboard-host'
-  return '/login'
+  return '/dashboard-tutor'
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
