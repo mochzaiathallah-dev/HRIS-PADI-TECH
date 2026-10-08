@@ -17,13 +17,13 @@ Pastikan komputer Anda telah terpasang:
 
 Buka terminal (PowerShell / Command Prompt / Terminal VS Code) di folder proyek `d:\HRIS PADI TECH`, lalu jalankan:
 
-### Langkah A: Instal Dependensi (Jika baru mengklon repositori)
+### Langkah A: Instal Dependensi
 ```powershell
 npm install
 ```
 
 ### Langkah B: Periksa File `.env`
-Pastikan file `.env` telah ada di root direktori dengan isi:
+Pastikan file `.env` telah ada di root direktori dengan konfigurasi:
 ```env
 VITE_SUPABASE_URL=https://zusbjxtfwzymjfdbewst.supabase.co
 VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp1c2JqeHRmd3p5bWpmZGJld3N0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE0MzQ3NDIsImV4cCI6MjEwNzAxMDc0Mn0.0p1r3qgDqAYTj6Q7p3Q86XqEbeUZVWJ1PGfJfPIWIPY
@@ -34,99 +34,99 @@ VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 npm run dev
 ```
 
-Terminal akan menampilkan URL lokal:
-```text
-  VITE v8.3.x  ready in 250 ms
-
-  ➜  Local:   http://localhost:5173/
-  ➜  Network: use --host to expose
-```
-
 Buka browser Anda dan akses: **`http://localhost:5173`**
 
 ---
 
-## 👥 3. Membuat Akun Uji Coba di Supabase
+## 👑 3. Akun Utama (Owner) & Pendaftaran Karyawan
 
-Untuk menguji fitur multi-peran (*Role-Based Access*), buat 3 akun di dashboard Supabase:
-
+### Akun Owner Pertama (Dibuat di Supabase):
 1. Buka [Supabase Dashboard > Authentication > Users](https://supabase.com/dashboard/project/zusbjxtfwzymjfdbewst/auth/users).
-2. Klik tombol hijau **"Add User"** ➔ **"Create User"**.
-3. Masukkan Email, Password (min. 6 karakter), centang *Auto Confirm User*, dan tambahkan `User Metadata` (JSON):
+2. Klik **"Add User"** ➔ **"Create User"**:
+   - **Email:** `owner@paditech.com`
+   - **Password:** `password123`
+   - Centang **Auto Confirm User**
+   - **User Metadata (JSON):** `{"nama": "Pak Budi (Owner)", "role": "owner"}`
+3. Klik **"Create User"**.
 
-| Peran | Contoh Email | Password | User Metadata (JSON) | Akses Halaman |
-| :--- | :--- | :--- | :--- | :--- |
-| **Owner** | `owner@paditech.com` | `password123` | `{"nama": "Pak Budi", "role": "owner"}` | `/dashboard` |
-| **Tutor Bimbel** | `tutor@paditech.com` | `password123` | `{"nama": "Nikita Khoirunnisa", "role": "tutor"}` | `/input-laporan` |
-| **Host TikTok** | `host@paditech.com` | `password123` | `{"nama": "Siti Rahma", "role": "host"}` | `/input-laporan` |
-
-> *Catatan: Trigger PostgreSQL di database akan otomatis menyinkronkan data metadata ini ke tabel `public.users_profile`.*
-
----
-
-## 🧪 4. Skenario Pengujian Fitur (Testing Flow)
-
-### 🔹 Skenario 1: Pengujian Form Tutor Bimbel
-1. Buka `http://localhost:5173/login`.
-2. Login dengan akun **Tutor** (`tutor@paditech.com`).
-3. Sistem akan otomatis mengarahkan ke tab **Form Bimbel** di `/input-laporan`.
-4. Pilih **Tanggal**, pilih **Nama Murid** (contoh: *Ahmad Fauzan*), klik tombol *quick pill* **Mata Pelajaran** (*Matematika*), isi **Topik** (*Operasi Hitung Pecahan*), dan isi **Ringkasan Materi**.
-5. Klik **"Kirim Laporan Bimbel"**.
-6. Laporan berhasil tersimpan ke Supabase dan langsung muncul di kartu riwayat di bawah form.
+### Pendaftaran Karyawan Oleh Owner (Langsung di Aplikasi):
+Setelah login sebagai Owner di `http://localhost:5173`, Owner dapat:
+- Menekan tombol **"+ Daftarkan Karyawan"** di dashboard.
+- Memasukkan Nama, Email, Password Awal, dan memilih role: **Tutor Bimbel** atau **Host TikTok Live**.
+- Mengubah/Mereset kata sandi karyawan jika karyawan lupa sandi melalui tombol **"Ganti Kata Sandi"** pada tab *Manajemen Karyawan*.
 
 ---
 
-### 🔹 Skenario 2: Pengujian Form Host TikTok & Kompresi Gambar
-1. Di halaman `/input-laporan`, klik tab **Form TikTok Live**.
-2. Masukkan **Durasi Live** (contoh: klik tombol *120 Menit*).
-3. Masukkan **GMV Penjualan** (contoh: `7500000` ➔ format otomatis menjadi `Rp 7.500.000`).
-4. Masukkan **Tayangan** dan **Impresi**.
-5. Unggah foto *screenshot* bukti GMV (ukuran 2–5 MB).
-6. Perhatikan indikator: Gambar otomatis dikompresi di browser (*client-side*) menjadi **WebP** dengan penghematan ukuran **>80%**.
-7. Klik **"Kirim Laporan TikTok Live"**. Foto terunggah ke Supabase Storage `bukti_tiktok` dan data tersimpan ke tabel.
+## 🖥️ 4. Tiga Dashboard Khusus Sesuai Peran
+
+Sistem secara otomatis mengarahkan pengguna ke dashboard khusus sesuai perannya:
+
+| Peran | Halaman URL | Fitur Utama |
+| :--- | :--- | :--- |
+| **Owner** | `/dashboard` | • Executive KPI (Total GMV, Sesi, Jam Live, Views)<br>• Grafik Recharts Realtime (Area, Pie, Bar)<br>• Tabel Bimbel & TikTok + Ekspor CSV<br>• **Generate PDF Laporan Siswa (Format Resmi)**<br>• **Manajemen Karyawan (Tambah Akun & Reset Sandi)** |
+| **Tutor Bimbel** | `/dashboard-tutor` | • Input Sesi Mengajar & Siswa Binaan<br>• Quick Subject Pills (Matematika, IPA, B. Inggris, dll)<br>• Riwayat Sesi Mengajar Terkirim |
+| **Host TikTok Live** | `/dashboard-host` | • Input Durasi, Impresi & GMV (Format IDR Otomatis)<br>• **Kompresi Otomatis Foto Bukti (WebP - Hemat Kuota 90%)**<br>• Riwayat Live & Bukti Terunggah |
 
 ---
 
-### 🔹 Skenario 3: Pengujian Realtime Dashboard Owner (WebSocket)
-1. Buka 2 jendela/tab browser berdampingan:
-   - **Jendela 1 (Desktop):** Login sebagai **Owner** (`owner@paditech.com`) ➔ buka `/dashboard`.
-   - **Jendela 2 (Smartphone/Tab lain):** Login sebagai **Host / Tutor** ➔ buka `/input-laporan`.
-2. Di Jendela 2, lakukan submit laporan baru (Bimbel atau TikTok).
-3. **Hasil:** Di Jendela 1 (Owner), banner hijau *"Data Baru Terdeteksi Realtime"* akan menyala, angka total GMV, sesi bimbel, grafik tren Recharts, dan tabel data langsung bertambah secara otomatis **tanpa perlu me-refresh halaman browser!**
+## 🧪 5. Skenario Pengujian Fitur (Testing Flow)
+
+### 🔹 Skenario 1: Owner Mendaftarkan Karyawan Baru
+1. Buka `http://localhost:5173/login` dan masuk dengan akun Owner (`owner@paditech.com` / `password123`).
+2. Klik tombol **"+ Daftarkan Karyawan"** di kanan atas.
+3. Pilih role **Tutor Bimbel**, isi Nama `Nikita Khoirunnisa`, Email `nikita@paditech.com`, Sandi `tutor123`.
+4. Klik **"Daftarkan Karyawan"**. Akun langsung aktif dan muncul di daftar tabel karyawan.
 
 ---
 
-### 🔹 Skenario 4: Pengujian Cetak PDF Laporan Belajar Siswa
-1. Di halaman **Owner Dashboard** (`/dashboard`), klik tombol biru **"Generate PDF Laporan Siswa"** di atas atau klik tombol **"PDF"** pada baris siswa di tabel Bimbel.
-2. Modal akan muncul dengan data siswa dan sesi yang terdeteksi otomatis.
-3. Anda dapat menyesuaikan nama Tutor atau menambahkan catatan evaluasi khusus.
-4. Klik **"Unduh Laporan PDF"**.
-5. Buka file PDF yang terunduh di komputer Anda. Format dokumen akan persis dengan standar dokumen resmi:
-   - Header box (*Nama Siswa, Kelas, Tutor, Periode Laporan*).
-   - Tabel *Ringkasan Kegiatan Belajar* dengan *bullet points*.
+### 🔹 Skenario 2: Tutor Login & Input Sesi Bimbel
+1. Buka tab baru / mode incognito di `http://localhost:5173/login`.
+2. Login dengan akun Tutor yang baru dibuat (`nikita@paditech.com` / `tutor123`).
+3. Sistem otomatis mengarahkan ke **`/dashboard-tutor`**.
+4. Isi data sesi (Pilih Murid *Ahmad Fauzan*, Mata Pelajaran *Matematika*, Topik *Operasi Hitung Pecahan*).
+5. Klik **"Kirim Laporan Bimbel"**. Data langsung tersimpan ke Supabase.
+
+---
+
+### 🔹 Skenario 3: Host Login & Upload Bukti GMV Terkompresi
+1. Login dengan akun Host TikTok di `http://localhost:5173/login`.
+2. Sistem otomatis mengarahkan ke **`/dashboard-host`**.
+3. Masukkan Durasi (contoh: *120 Menit*) dan GMV (contoh: `8500000` ➔ otomatis `Rp 8.500.000`).
+4. Pilih file foto screenshot GMV ➔ Sistem otomatis mengompresi foto ke format **WebP** dengan penghematan ukuran >85%.
+5. Klik **"Kirim Laporan TikTok Live"**. Foto terunggah ke Supabase Storage `bukti_tiktok`.
+
+---
+
+### 🔹 Skenario 4: Realtime WebSocket & Update Otomatis di Layar Owner
+1. Buka 2 jendela berdampingan (Jendela 1: Owner di `/dashboard`, Jendela 2: Tutor/Host di `/dashboard-tutor` atau `/dashboard-host`).
+2. Saat Tutor/Host menekan tombol kirim laporan di Jendela 2, layar Owner di Jendela 1 akan menampilkan banner notifikasi hijau dan metrik/grafik langsung bertambah seketika **tanpa perlu me-refresh halaman!**
+
+---
+
+### 🔹 Skenario 5: Cetak PDF Laporan Belajar Siswa (Format Resmi)
+1. Di Dashboard Owner (`/dashboard`), klik tombol **"Generate PDF Laporan Siswa"** atau tombol **"PDF"** pada baris murid di tabel.
+2. Modal akan menampilkan data siswa dan ringkasan sesi belajar bulan tersebut.
+3. Klik **"Unduh Laporan PDF"**.
+4. Buka dokumen PDF untuk melihat tampilan layout resmi:
+   - Header Box: *Nama Siswa, Kelas, Tutor, Periode Laporan*.
+   - Tabel *Ringkasan Kegiatan Belajar* (*No, Tanggal, Mapel, Topik, Bullet Points*).
    - Box *Perkembangan Belajar*.
    - Footer penomoran halaman otomatis.
 
 ---
 
-### 🔹 Skenario 5: Pengujian Ekspor CSV
-1. Pada tab **Data Laporan Bimbel**, klik tombol **"Ekspor CSV"** ➔ File `.csv` langsung terunduh untuk dibuka di Microsoft Excel / Google Sheets.
-2. Pada tab **Data Laporan TikTok**, klik tombol **"Ekspor CSV"** ➔ Rekapitulasi durasi, GMV, dan link bukti terunduh.
+### 🔹 Skenario 6: Owner Mereset Kata Sandi Karyawan
+1. Di Dashboard Owner, buka tab **"👥 Manajemen Karyawan"**.
+2. Klik tombol **"Ganti Kata Sandi"** pada baris karyawan yang lupa sandi.
+3. Masukkan kata sandi baru (min. 6 karakter) ➔ Klik **"Simpan Sandi Baru"**.
+4. Karyawan dapat langsung login menggunakan kata sandi yang baru tersebut.
 
 ---
 
-## 🛠️ 5. Perintah Pengujian Tambahan
+## 🛠️ 6. Perintah Berguna
 
 | Perintah | Deskripsi |
 | :--- | :--- |
 | `npm run dev` | Menjalankan server lokal (*Hot Module Replacement*) |
 | `npm run build` | Menguji kompilasi produksi TypeScript & Vite bundle (*Zero Error*) |
 | `npm run preview` | Menjalankan preview lokal dari hasil build folder `dist/` |
-
----
-
-## 🔒 6. Keamanan & Zero Vercel Compute
-
-- Seluruh autentikasi dan kueri data berjalan langsung dari *browser* ke Supabase PostgREST via `@supabase/supabase-js`.
-- Tidak ada *serverless functions* atau folder `api/` yang membebani limit hosting Vercel.
-- Seluruh hak akses dijamin oleh **Row Level Security (RLS)** PostgreSQL Supabase.

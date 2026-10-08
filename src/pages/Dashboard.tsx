@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
-import { LaporanBimbel, LaporanTiktok, Murid } from '@/types'
+import { LaporanBimbel, LaporanTiktok, Murid, UserProfile } from '@/types'
 import { exportBimbelToCSV, exportTikTokToCSV } from '@/lib/csvExporter'
 import { generateStudentReportPDF } from '@/lib/pdfExporter'
 import { PdfExportModal } from '@/components/dashboard/PdfExportModal'
+import { AddEmployeeModal } from '@/components/dashboard/AddEmployeeModal'
+import { ResetPasswordModal } from '@/components/dashboard/ResetPasswordModal'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -38,8 +40,12 @@ import {
   Sparkles,
   Zap,
   Image as ImageIcon,
-  Activity,
-  Layers
+  Layers,
+  Users,
+  UserPlus,
+  KeyRound,
+  ShieldCheck,
+  UserCheck
 } from 'lucide-react'
 
 const CHART_COLORS = ['#3b82f6', '#ec4899', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4']
@@ -51,11 +57,12 @@ export const DashboardPage: React.FC = () => {
   const [bimbelList, setBimbelList] = useState<LaporanBimbel[]>([])
   const [tiktokList, setTiktokList] = useState<LaporanTiktok[]>([])
   const [muridList, setMuridList] = useState<Murid[]>([])
+  const [employeeList, setEmployeeList] = useState<UserProfile[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [realtimePulse, setRealtimePulse] = useState(false)
 
   // Filter States
-  const [activeTab, setActiveTab] = useState<'overview' | 'bimbel' | 'tiktok'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'bimbel' | 'tiktok' | 'karyawan'>('overview')
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [filterMurid, setFilterMurid] = useState<string>('all')
@@ -63,6 +70,8 @@ export const DashboardPage: React.FC = () => {
 
   // Modal States
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false)
+  const [isAddEmployeeOpen, setIsAddEmployeeOpen] = useState(false)
+  const [resetEmployeeTarget, setResetEmployeeTarget] = useState<UserProfile | null>(null)
   const [preselectedMuridId, setPreselectedMuridId] = useState<string | undefined>(undefined)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
 
@@ -117,6 +126,15 @@ export const DashboardPage: React.FC = () => {
         .order('nama', { ascending: true })
 
       if (muridData) setMuridList(muridData as Murid[])
+
+      // Fetch All Employees (Users Profile)
+      const { data: empData, error: empError } = await supabase
+        .from('users_profile')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (empError) console.warn('Employee fetch warning:', empError.message)
+      if (empData) setEmployeeList(empData as UserProfile[])
     } catch (err) {
       console.error('Error loading dashboard data:', err)
     } finally {
@@ -128,7 +146,6 @@ export const DashboardPage: React.FC = () => {
   useEffect(() => {
     fetchData()
 
-    // Setup Supabase Realtime Channel
     const channel = supabase
       .channel('realtime_owner_channel')
       .on(
@@ -137,7 +154,6 @@ export const DashboardPage: React.FC = () => {
         () => {
           setRealtimePulse(true)
           setTimeout(() => setRealtimePulse(false), 2500)
-          // Refetch to populate joined fields
           fetchData()
         }
       )
@@ -147,13 +163,11 @@ export const DashboardPage: React.FC = () => {
         () => {
           setRealtimePulse(true)
           setTimeout(() => setRealtimePulse(false), 2500)
-          // Refetch to populate joined fields
           fetchData()
         }
       )
       .subscribe()
 
-    // Proper cleanup on unmount to prevent memory leaks
     return () => {
       supabase.removeChannel(channel)
     }
@@ -186,6 +200,16 @@ export const DashboardPage: React.FC = () => {
     })
   }, [tiktokList, selectedMonth, filterHost, searchQuery])
 
+  const filteredEmployees = useMemo(() => {
+    return employeeList.filter((emp) => {
+      if (!searchQuery) return true
+      return (
+        emp.nama?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        emp.role?.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    })
+  }, [employeeList, searchQuery])
+
   const totalGMV = useMemo(() => {
     return filteredTiktok.reduce((acc, curr) => acc + Number(curr.gmv_rupiah || 0), 0)
   }, [filteredTiktok])
@@ -194,23 +218,18 @@ export const DashboardPage: React.FC = () => {
     return filteredTiktok.reduce((acc, curr) => acc + Number(curr.durasi_menit || 0), 0)
   }, [filteredTiktok])
 
-  const totalTayangan = useMemo(() => {
-    return filteredTiktok.reduce((acc, curr) => acc + Number(curr.tayangan || 0), 0)
-  }, [filteredTiktok])
-
   const totalSesiBimbel = filteredBimbel.length
 
   // Chart Data 1: GMV by Date
   const gmvChartData = useMemo(() => {
     const map = new Map<string, number>()
-    // Sort ascending for chart
     const sorted = [...filteredTiktok].sort((a, b) => new Date(a.tanggal).getTime() - new Date(b.tanggal).getTime())
     sorted.forEach((item) => {
       const dateKey = item.tanggal
       map.set(dateKey, (map.get(dateKey) || 0) + Number(item.gmv_rupiah || 0))
     })
     return Array.from(map.entries()).map(([tanggal, gmv]) => ({
-      tanggal: tanggal.slice(5), // MM-DD
+      tanggal: tanggal.slice(5),
       gmv,
     }))
   }, [filteredTiktok])
@@ -250,7 +269,6 @@ export const DashboardPage: React.FC = () => {
     const studentName = item.murid?.nama || studentMurid?.nama || 'Siswa'
     const studentClass = item.murid?.tingkat_kelas || studentMurid?.tingkat_kelas || 'Kelas'
     
-    // Find all sessions for this student in the same month
     const itemMonth = item.tanggal.slice(0, 7)
     const studentSessions = bimbelList.filter(
       (b) => b.murid_id === item.murid_id && b.tanggal.startsWith(itemMonth)
@@ -343,7 +361,7 @@ export const DashboardPage: React.FC = () => {
           </div>
         )}
 
-        {/* Top Control Bar: Global Filters & Quick PDF Generator */}
+        {/* Top Control Bar: Global Filters & Action Buttons */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Filter Bulan */}
@@ -378,8 +396,16 @@ export const DashboardPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Action: Export PDF Laporan Siswa (Matching Template) */}
+          {/* Action: Quick PDF & Add Employee */}
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => setIsAddEmployeeOpen(true)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 text-xs shadow-md shadow-indigo-500/20"
+            >
+              <UserPlus className="h-4 w-4" />
+              <span>+ Daftarkan Karyawan</span>
+            </Button>
             <Button
               size="sm"
               onClick={() => {
@@ -389,7 +415,7 @@ export const DashboardPage: React.FC = () => {
               className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 text-xs shadow-md shadow-blue-500/20"
             >
               <FileDown className="h-4 w-4" />
-              <span>Generate PDF Laporan Siswa</span>
+              <span>Generate PDF Siswa</span>
             </Button>
           </div>
         </div>
@@ -456,32 +482,32 @@ export const DashboardPage: React.FC = () => {
             </CardContent>
           </Card>
 
-          {/* Card 4: Total Tayangan / Impresi */}
+          {/* Card 4: Total Karyawan Aktif */}
           <Card className="hover:shadow-md transition-shadow border-slate-200 dark:border-slate-800">
             <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
               <CardTitle className="text-xs font-semibold text-muted-foreground">
-                Total Jangkauan (Views)
+                Total Karyawan Aktif
               </CardTitle>
-              <div className="h-8 w-8 rounded-lg bg-emerald-100 dark:bg-emerald-950 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-                <Activity className="h-4 w-4" />
+              <div className="h-8 w-8 rounded-lg bg-indigo-100 dark:bg-indigo-950 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                <Users className="h-4 w-4" />
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400">
-                {totalTayangan.toLocaleString('id-ID')}
+              <div className="text-2xl font-extrabold text-indigo-600 dark:text-indigo-400">
+                {employeeList.length} Karyawan
               </div>
               <p className="text-[11px] text-muted-foreground mt-1">
-                Jangkauan penonton di TikTok Live
+                Tutor Bimbel & Host TikTok Live
               </p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Tab Switcher: Overview / Bimbel Table / TikTok Table */}
-        <div className="flex items-center space-x-2 border-b border-slate-200 dark:border-slate-800">
+        {/* Tab Switcher: Overview / Bimbel Table / TikTok Table / Manajemen Karyawan */}
+        <div className="flex items-center space-x-2 border-b border-slate-200 dark:border-slate-800 overflow-x-auto pb-1">
           <button
             onClick={() => setActiveTab('overview')}
-            className={`pb-2.5 px-3 text-xs font-bold transition-colors border-b-2 flex items-center gap-1.5 ${
+            className={`pb-2.5 px-3 text-xs font-bold transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'overview'
                 ? 'border-blue-600 text-blue-600 dark:text-blue-400'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -493,7 +519,7 @@ export const DashboardPage: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('bimbel')}
-            className={`pb-2.5 px-3 text-xs font-bold transition-colors border-b-2 flex items-center gap-1.5 ${
+            className={`pb-2.5 px-3 text-xs font-bold transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'bimbel'
                 ? 'border-blue-600 text-blue-600 dark:text-blue-400'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -505,7 +531,7 @@ export const DashboardPage: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('tiktok')}
-            className={`pb-2.5 px-3 text-xs font-bold transition-colors border-b-2 flex items-center gap-1.5 ${
+            className={`pb-2.5 px-3 text-xs font-bold transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'tiktok'
                 ? 'border-pink-600 text-pink-600 dark:text-pink-400'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -513,6 +539,18 @@ export const DashboardPage: React.FC = () => {
           >
             <Video className="h-4 w-4" />
             <span>Data Laporan TikTok ({filteredTiktok.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('karyawan')}
+            className={`pb-2.5 px-3 text-xs font-bold transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'karyawan'
+                ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Users className="h-4 w-4" />
+            <span>👥 Manajemen Karyawan ({employeeList.length})</span>
           </button>
         </div>
 
@@ -657,42 +695,46 @@ export const DashboardPage: React.FC = () => {
                 </CardContent>
               </Card>
 
-              {/* Quick Summary Info Box */}
+              {/* Quick Actions Info Card */}
               <Card className="border-slate-200 dark:border-slate-800 flex flex-col justify-between">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-blue-600" />
-                    Format Laporan Belajar Siswa (Sesuai Standar)
+                    <UserPlus className="h-4 w-4 text-indigo-600" />
+                    Akses Langsung Manajemen Karyawan
                   </CardTitle>
                   <CardDescription className="text-xs">
-                    Sistem dapat langsung meng-generate PDF resmi siap kirim ke orang tua murid
+                    Daftarkan akun Tutor/Host baru atau ubah kata sandi karyawan dengan 1 klik
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3 text-xs">
-                  <div className="p-3 rounded-lg bg-blue-50/50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900 space-y-1.5">
-                    <div className="font-semibold text-blue-800 dark:text-blue-300 flex items-center gap-1.5">
-                      <GraduationCap className="h-4 w-4" />
-                      Struktur Dokumen PDF Otomatis:
+                  <div className="p-3 rounded-lg bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900 space-y-1.5">
+                    <div className="font-semibold text-indigo-800 dark:text-indigo-300 flex items-center gap-1.5">
+                      <ShieldCheck className="h-4 w-4" />
+                      Fitur Owner Terproteksi PostgreSQL:
                     </div>
                     <ul className="text-[11px] text-muted-foreground list-disc list-inside space-y-0.5">
-                      <li>Header Box Siswa, Kelas, Tutor, dan Periode Bulan</li>
-                      <li>Tabel Ringkasan Kegiatan Belajar (No, Tanggal, Mapel, Topik, Bullet Points Ringkasan)</li>
-                      <li>Box Catatan Perkembangan Belajar & Evaluasi Tutor</li>
-                      <li>Footer Penomoran Halaman Otomatis</li>
+                      <li>Daftarkan email dan password akun Tutor / Host secara instan</li>
+                      <li>Reset password karyawan langsung tanpa perlu buka Supabase dashboard</li>
+                      <li>Role isolation: Karyawan hanya bisa mengakses dashboard mereka sendiri</li>
                     </ul>
                   </div>
                 </CardContent>
-                <div className="p-6 pt-0">
+                <div className="p-6 pt-0 flex gap-2">
                   <Button
                     size="sm"
-                    onClick={() => {
-                      setPreselectedMuridId(undefined)
-                      setIsPdfModalOpen(true)
-                    }}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs gap-1.5"
+                    onClick={() => setIsAddEmployeeOpen(true)}
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs gap-1.5 shadow-md shadow-indigo-500/20"
                   >
-                    <FileDown className="h-4 w-4" />
-                    Buat Laporan Belajar Siswa Sekarang
+                    <UserPlus className="h-4 w-4" />
+                    + Tambah Karyawan
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setActiveTab('karyawan')}
+                    className="text-xs"
+                  >
+                    Kelola Karyawan ➔
                   </Button>
                 </div>
               </Card>
@@ -703,7 +745,6 @@ export const DashboardPage: React.FC = () => {
         {/* TAB 2: DATA LAPORAN BIMBEL */}
         {activeTab === 'bimbel' && (
           <div className="space-y-4 animate-in fade-in">
-            {/* Table Controls */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <select
@@ -744,7 +785,6 @@ export const DashboardPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Bimbel Data Table */}
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
@@ -819,7 +859,6 @@ export const DashboardPage: React.FC = () => {
         {/* TAB 3: DATA LAPORAN TIKTOK LIVE */}
         {activeTab === 'tiktok' && (
           <div className="space-y-4 animate-in fade-in">
-            {/* Table Controls */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <select
@@ -849,7 +888,6 @@ export const DashboardPage: React.FC = () => {
               </div>
             </div>
 
-            {/* TikTok Data Table */}
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
@@ -916,7 +954,117 @@ export const DashboardPage: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* TAB 4: MANAJEMEN KARYAWAN (TUTOR & HOST) */}
+        {activeTab === 'karyawan' && (
+          <div className="space-y-4 animate-in fade-in">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                  <Users className="h-4 w-4 text-indigo-600" />
+                  Daftar Karyawan Terdaftar ({filteredEmployees.length})
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Kelola hak akses Tutor Bimbel dan Host TikTok Live
+                </p>
+              </div>
+
+              <Button
+                size="sm"
+                onClick={() => setIsAddEmployeeOpen(true)}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 text-xs shadow-md shadow-indigo-500/20"
+              >
+                <UserPlus className="h-4 w-4" />
+                <span>+ Daftarkan Karyawan Baru</span>
+              </Button>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/60 border-b text-slate-700 dark:text-slate-300 font-semibold">
+                    <tr>
+                      <th className="p-3 w-10 text-center">No</th>
+                      <th className="p-3">Nama Karyawan</th>
+                      <th className="p-3">Peran / Role</th>
+                      <th className="p-3">Status Akses</th>
+                      <th className="p-3 text-right">Aksi Kata Sandi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {filteredEmployees.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="p-6 text-center text-muted-foreground">
+                          Belum ada karyawan yang terdaftar.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredEmployees.map((emp, idx) => (
+                        <tr key={emp.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                          <td className="p-3 text-center text-muted-foreground">{idx + 1}</td>
+                          <td className="p-3 font-semibold text-slate-900 dark:text-slate-100">
+                            {emp.nama}
+                          </td>
+                          <td className="p-3">
+                            <Badge
+                              variant={
+                                emp.role === 'owner'
+                                  ? 'default'
+                                  : emp.role === 'tutor'
+                                  ? 'outline'
+                                  : 'secondary'
+                              }
+                              className={`text-[11px] capitalize ${
+                                emp.role === 'tutor'
+                                  ? 'text-blue-700 bg-blue-50 border-blue-200 dark:bg-blue-950 dark:text-blue-300'
+                                  : emp.role === 'host'
+                                  ? 'text-pink-700 bg-pink-50 border-pink-200 dark:bg-pink-950 dark:text-pink-300'
+                                  : ''
+                              }`}
+                            >
+                              {emp.role === 'tutor' ? 'Tutor Bimbel' : emp.role === 'host' ? 'Host TikTok Live' : 'Owner'}
+                            </Badge>
+                          </td>
+                          <td className="p-3">
+                            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                              <UserCheck className="h-3.5 w-3.5" /> Aktif
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setResetEmployeeTarget(emp)}
+                              className="h-7 px-2.5 text-xs text-amber-700 border-amber-200 hover:bg-amber-50 dark:border-amber-900 dark:text-amber-400 dark:hover:bg-amber-950 gap-1.5"
+                            >
+                              <KeyRound className="h-3.5 w-3.5" />
+                              <span>Ganti Kata Sandi</span>
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
+
+      {/* Add Employee Modal */}
+      <AddEmployeeModal
+        isOpen={isAddEmployeeOpen}
+        onClose={() => setIsAddEmployeeOpen(false)}
+        onSuccess={() => fetchData()}
+      />
+
+      {/* Reset Password Modal */}
+      <ResetPasswordModal
+        isOpen={!!resetEmployeeTarget}
+        onClose={() => setResetEmployeeTarget(null)}
+        employee={resetEmployeeTarget}
+      />
 
       {/* PDF Export Modal */}
       <PdfExportModal

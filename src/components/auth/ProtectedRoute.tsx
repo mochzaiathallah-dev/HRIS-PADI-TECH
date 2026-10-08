@@ -9,6 +9,13 @@ interface ProtectedRouteProps {
   allowedRoles?: UserRole[]
 }
 
+export function getDashboardPathForRole(role: UserRole | null): string {
+  if (role === 'owner') return '/dashboard'
+  if (role === 'tutor') return '/dashboard-tutor'
+  if (role === 'host') return '/dashboard-host'
+  return '/login'
+}
+
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   children,
   allowedRoles,
@@ -39,18 +46,13 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
 
   // 2. Jika ada pembatasan role tertentu (allowedRoles)
   if (allowedRoles && role && !allowedRoles.includes(role)) {
-    // Arahkan ke halaman default sesuai peran masing-masing
-    if (role === 'owner') {
-      return <Navigate to="/dashboard" replace />
-    } else {
-      return <Navigate to="/input-laporan" replace />
-    }
+    return <Navigate to={getDashboardPathForRole(role)} replace />
   }
 
   return <>{children}</>
 }
 
-// Redirect wrapper untuk user yang sudah login saat mengakses /login atau /
+// Redirect wrapper untuk user yang sudah login saat mengakses /login
 export const PublicOnlyRoute: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
@@ -65,10 +67,7 @@ export const PublicOnlyRoute: React.FC<{ children: React.ReactNode }> = ({
   }
 
   if (isAuthenticated) {
-    if (role === 'owner') {
-      return <Navigate to="/dashboard" replace />
-    }
-    return <Navigate to="/input-laporan" replace />
+    return <Navigate to={getDashboardPathForRole(role)} replace />
   }
 
   return <>{children}</>
