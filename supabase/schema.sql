@@ -313,11 +313,19 @@ END $$;
 -- 15. OWNER EMPLOYEE MANAGEMENT & PASSWORD RESET FUNCTIONS
 -- ==============================================================================
 
+-- Pastikan RLS users_profile mengizinkan Owner untuk manage
+DROP POLICY IF EXISTS "Owner can manage all profiles" ON public.users_profile;
+CREATE POLICY "Owner can manage all profiles"
+ON public.users_profile FOR ALL
+TO authenticated
+USING (public.is_owner())
+WITH CHECK (public.is_owner());
+
 CREATE OR REPLACE FUNCTION public.owner_create_employee(
     p_email TEXT,
-    p_password TEXT,
     p_nama TEXT,
-    p_role user_role
+    p_password TEXT,
+    p_role TEXT
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -327,12 +335,24 @@ AS $$
 DECLARE
     new_user_id UUID;
     clean_email TEXT;
+    target_role user_role;
 BEGIN
     IF NOT public.is_owner() THEN
         RAISE EXCEPTION 'Akses ditolak: Hanya akun Owner yang berhak mendaftarkan karyawan baru!';
     END IF;
 
     clean_email := lower(trim(p_email));
+
+    IF clean_email !~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' THEN
+        RAISE EXCEPTION 'Format email % tidak valid!', clean_email;
+    END IF;
+
+    BEGIN
+        target_role := p_role::user_role;
+    EXCEPTION
+        WHEN OTHERS THEN
+            RAISE EXCEPTION 'Role % tidak valid! Pilih tutor atau host.', p_role;
+    END;
 
     IF EXISTS (SELECT 1 FROM auth.users WHERE email = clean_email) THEN
         RAISE EXCEPTION 'Email % sudah terdaftar di sistem. Gunakan email lain!', clean_email;
@@ -344,6 +364,8 @@ BEGIN
 
     new_user_id := gen_random_uuid();
 
+    -- Insert ke auth.users dengan status terverifikasi (email_confirmed_at = now())
+    -- Mencegah pengiriman email verifikasi sehingga 100% bebas dari 'email rate limit exceeded'
     INSERT INTO auth.users (
         id,
         instance_id,
@@ -367,7 +389,7 @@ BEGIN
         crypt(p_password, gen_salt('bf')),
         now(),
         '{"provider":"email","providers":["email"]}'::jsonb,
-        jsonb_build_object('nama', p_nama, 'role', p_role::text),
+        jsonb_build_object('nama', p_nama, 'role', target_role::text),
         now(),
         now(),
         encode(gen_random_bytes(32), 'hex')
@@ -395,7 +417,7 @@ BEGIN
     );
 
     INSERT INTO public.users_profile (id, nama, role)
-    VALUES (new_user_id, p_nama, p_role)
+    VALUES (new_user_id, p_nama, target_role)
     ON CONFLICT (id) DO UPDATE
     SET nama = EXCLUDED.nama,
         role = EXCLUDED.role,
@@ -406,7 +428,7 @@ BEGIN
         'user_id', new_user_id,
         'email', clean_email,
         'nama', p_nama,
-        'role', p_role::text
+        'role', target_role::text
     );
 END;
 $$;
@@ -445,5 +467,6 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.owner_create_employee(TEXT, TEXT, TEXT, user_role) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.owner_create_employee(TEXT, TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.owner_reset_employee_password(UUID, TEXT) TO authenticated;
+

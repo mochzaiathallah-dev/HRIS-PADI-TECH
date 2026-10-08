@@ -71,11 +71,40 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
     setSuccessMessage(null)
 
     try {
+      const emailClean = values.email.trim().toLowerCase()
+      const namaClean = values.nama.trim()
+
+      // Step 1: Coba via Database Function (Bypass Email Rate Limit & Instan)
+      const { data: rpcData, error: rpcError } = await supabase.rpc('owner_create_employee', {
+        p_email: emailClean,
+        p_nama: namaClean,
+        p_password: values.password,
+        p_role: values.role,
+      })
+
+      if (!rpcError && rpcData?.success) {
+        setSuccessMessage(
+          `Karyawan ${namaClean} berhasil didaftarkan sebagai ${
+            values.role === 'tutor' ? 'Tutor Bimbel' : 'Host TikTok Live'
+          }!`
+        )
+        reset()
+        setTimeout(() => {
+          onSuccess()
+          onClose()
+        }, 1500)
+        return
+      }
+
+      // Jika RPC error bukan karena function tidak ada, lemparkan error aslinya
+      if (rpcError && !rpcError.message.includes('schema cache') && !rpcError.code?.includes('PGRST202')) {
+        throw new Error(rpcError.message)
+      }
+
+      // Step 2: Fallback ke Supabase Auth SignUp jika RPC belum terpasang di database
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
       const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-      // 1. Create a secondary in-memory Supabase client without session persistence
-      // This allows registering the employee in Supabase Auth WITHOUT logging out the Owner!
       const tempAuthClient = createClient(supabaseUrl, supabaseAnonKey, {
         auth: {
           persistSession: false,
@@ -84,21 +113,25 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
         },
       })
 
-      // 2. Sign up the employee with custom metadata (nama & role)
       const { data: signUpData, error: signUpError } = await tempAuthClient.auth.signUp({
-        email: values.email.trim(),
+        email: emailClean,
         password: values.password,
         options: {
           data: {
-            nama: values.nama.trim(),
+            nama: namaClean,
             role: values.role,
           },
         },
       })
 
       if (signUpError) {
+        if (signUpError.message.toLowerCase().includes('rate limit')) {
+          throw new Error(
+            'Batas kirim email Supabase tercapai (rate limit). Silakan jalankan script SQL di file "supabase/quick_fix_employee_rpc.sql" melalui menu SQL Editor Supabase agar pendaftaran karyawan bisa langsung tersimpan instan tanpa batasan email!'
+          )
+        }
         if (signUpError.message.includes('already registered')) {
-          throw new Error(`Email ${values.email} sudah terdaftar di sistem. Gunakan email lain!`)
+          throw new Error(`Email ${emailClean} sudah terdaftar di sistem. Gunakan email lain!`)
         }
         throw signUpError
       }
@@ -108,24 +141,24 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
       }
 
       if (signUpData.user.identities && signUpData.user.identities.length === 0) {
-        throw new Error(`Email ${values.email} sudah terdaftar sebelumnya di sistem. Silakan gunakan email lain.`)
+        throw new Error(`Email ${emailClean} sudah terdaftar sebelumnya di sistem. Silakan gunakan email lain.`)
       }
 
-      // 3. Upsert user profile to public.users_profile using Owner's authenticated client
+      // Upsert profile
       const { error: profileError } = await supabase
         .from('users_profile')
         .upsert({
           id: signUpData.user.id,
-          nama: values.nama.trim(),
+          nama: namaClean,
           role: values.role as UserRole,
         })
 
       if (profileError) {
-        console.warn('Profile upsert note (trigger might have handled it):', profileError.message)
+        console.warn('Profile upsert note:', profileError.message)
       }
 
       setSuccessMessage(
-        `Karyawan ${values.nama} berhasil didaftarkan sebagai ${
+        `Karyawan ${namaClean} berhasil didaftarkan sebagai ${
           values.role === 'tutor' ? 'Tutor Bimbel' : 'Host TikTok Live'
         }!`
       )
