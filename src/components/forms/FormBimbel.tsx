@@ -129,7 +129,10 @@ export const FormBimbel: React.FC<FormBimbelProps> = ({
     if (!user?.id) return
     setIsLoadingHistory(true)
     try {
-      const { data, error } = await supabase
+      let data: any = null
+      let error: any = null
+
+      const firstAttempt = await supabase
         .from('laporan_bimbel')
         .select(`
           id,
@@ -149,6 +152,33 @@ export const FormBimbel: React.FC<FormBimbelProps> = ({
         .eq('tutor_id', user.id)
         .order('tanggal', { ascending: false })
         .limit(10)
+
+      data = firstAttempt.data
+      error = firstAttempt.error
+
+      if (error && error.message.includes('foto_kegiatan_url')) {
+        const fallbackRes = await supabase
+          .from('laporan_bimbel')
+          .select(`
+            id,
+            tutor_id,
+            murid_id,
+            tanggal,
+            mata_pelajaran,
+            topik,
+            ringkasan,
+            created_at,
+            murid:murid_id (
+              nama,
+              tingkat_kelas
+            )
+          `)
+          .eq('tutor_id', user.id)
+          .order('tanggal', { ascending: false })
+          .limit(10)
+        data = fallbackRes.data
+        error = fallbackRes.error
+      }
 
       if (error) throw error
       if (data) setHistoryList(data as unknown as LaporanBimbel[])
@@ -254,7 +284,7 @@ _Terima kasih atas kerja samanya. Laporan resmi terverifikasi HRIS PADI TECH._`
       }
 
       // B. Insert Data Laporan Bimbel ke Supabase Table
-      const { error } = await supabase.from('laporan_bimbel').insert({
+      const insertPayload: any = {
         tutor_id: user.id,
         murid_id: values.murid_id,
         tanggal: values.tanggal,
@@ -262,7 +292,15 @@ _Terima kasih atas kerja samanya. Laporan resmi terverifikasi HRIS PADI TECH._`
         topik: values.topik.trim(),
         ringkasan: values.ringkasan.trim(),
         foto_kegiatan_url: fotoKegiatanUrl,
-      })
+      }
+
+      let { error } = await supabase.from('laporan_bimbel').insert(insertPayload)
+
+      if (error && error.message.includes('foto_kegiatan_url')) {
+        delete insertPayload.foto_kegiatan_url
+        const retryRes = await supabase.from('laporan_bimbel').insert(insertPayload)
+        error = retryRes.error
+      }
 
       if (error) throw error
 

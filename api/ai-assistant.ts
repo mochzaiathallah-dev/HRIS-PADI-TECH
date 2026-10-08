@@ -87,25 +87,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(geminiPayload),
-      }
-    )
+    const CANDIDATE_MODELS = [
+      'gemini-3.5-flash',
+      'gemini-3.7-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-3-flash-preview',
+      'gemini-3.8-flash'
+    ]
 
-    if (!response.ok) {
-      const errBody = await response.text()
-      console.error('Gemini API upstream error:', response.status, errBody)
-      return res.status(502).json({
-        error: 'Layanan AI Google Gemini sedang sibuk. Silakan coba kembali beberapa saat lagi.'
-      })
+    let answer: string | null = null
+    let lastError = ''
+
+    for (const model of CANDIDATE_MODELS) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(geminiPayload),
+          }
+        )
+
+        if (response.ok) {
+          const data = (await response.json()) as any
+          const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+          if (text) {
+            answer = text
+            break
+          }
+        } else {
+          lastError = await response.text()
+          console.warn(`Model ${model} returned ${response.status}, trying fallback...`)
+        }
+      } catch (err: any) {
+        lastError = err.message
+      }
     }
 
-    const data = await response.json()
-    const answer = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Maaf, asisten AI tidak dapat menghasilkan jawaban saat ini.'
+    if (!answer) {
+      return res.status(502).json({
+        error: 'Layanan AI sedang mengalami lonjakan antrean. Silakan coba kembali sesaat lagi.',
+        details: lastError
+      })
+    }
 
     return res.status(200).json({
       success: true,

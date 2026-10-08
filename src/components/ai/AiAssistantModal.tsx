@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useAuth } from '@/context/AuthContext'
+import { supabase } from '@/lib/supabase'
+import { exportAiContentToPdf } from '@/lib/aiPdfExporter'
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,7 +20,8 @@ import {
   Video, 
   ShieldCheck,
   Zap,
-  HelpCircle
+  HelpCircle,
+  FileDown
 } from 'lucide-react'
 
 interface Message {
@@ -71,7 +74,7 @@ const ROLE_PRESETS = {
 }
 
 export const AiAssistantModal: React.FC = () => {
-  const { role } = useAuth()
+  const { user, role } = useAuth()
   const [isOpen, setIsOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -83,23 +86,104 @@ export const AiAssistantModal: React.FC = () => {
   const config = ROLE_PRESETS[currentRole]
   const IconComponent = config.icon
 
-  // Initial greeting
+  // Load chat history from Supabase (or localStorage fallback) per user and role
   useEffect(() => {
-    if (messages.length === 0) {
-      setMessages([
-        {
-          id: 'welcome',
-          sender: 'ai',
-          text: `Halo! Saya adalah **${config.title}** bertenaga AI. Ada materi, soal latihan, ide live streaming, atau strategi yang ingin saya bantu buatkan hari ini? Silakan pilih salah satu ide cepat di atas atau ketik pertanyaan Anda langsung!`,
-          timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+    let isMounted = true
+
+    async function loadChatHistory() {
+      const storageKey = `hris_ai_chat_${user?.id || 'guest'}_${currentRole}`
+      const defaultGreeting: Message = {
+        id: 'welcome',
+        sender: 'ai',
+        text: `Halo! Saya adalah **${config.title}** bertenaga AI. Ada materi, soal latihan, ide live streaming, atau strategi yang ingin saya bantu buatkan hari ini? Silakan pilih salah satu ide cepat di atas atau ketik pertanyaan Anda langsung!`,
+        timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+      }
+
+      if (user?.id) {
+        try {
+          const { data, error } = await supabase
+            .from('ai_chat_history')
+            .select('id, message_role, content, created_at')
+            .eq('user_id', user.id)
+            .eq('role', currentRole)
+            .order('created_at', { ascending: true })
+
+          if (!error && data && data.length > 0) {
+            const formatted: Message[] = data.map((d: any) => ({
+              id: d.id,
+              sender: d.message_role === 'user' ? 'user' : 'ai',
+              text: d.content,
+              timestamp: new Date(d.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+            }))
+            if (isMounted) {
+              setMessages(formatted)
+              return
+            }
+          }
+        } catch (err) {
+          console.debug('Notice loading Supabase ai_chat_history:', err)
         }
-      ])
+      }
+
+      // Fallback: localStorage
+      const cached = localStorage.getItem(storageKey)
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            if (isMounted) {
+              setMessages(parsed)
+              return
+            }
+          }
+        } catch {}
+      }
+
+      if (isMounted) {
+        setMessages([defaultGreeting])
+      }
     }
-  }, [currentRole, config.title, messages.length])
+
+    loadChatHistory()
+
+    return () => {
+      isMounted = false
+    }
+  }, [user?.id, currentRole, config.title])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isLoading])
+
+  // Save single message to Supabase & localStorage
+  const saveMessageToStorage = async (msg: Message, messageRole: 'user' | 'assistant') => {
+    const storageKey = `hris_ai_chat_${user?.id || 'guest'}_${currentRole}`
+
+    // 1. Supabase insert
+    if (user?.id) {
+      try {
+        await supabase.from('ai_chat_history').insert({
+          user_id: user.id,
+          role: currentRole,
+          message_role: messageRole,
+          content: msg.text,
+        })
+      } catch (err) {
+        console.debug('Notice persisting to ai_chat_history:', err)
+      }
+    }
+
+    // 2. LocalStorage backup
+    try {
+      setMessages((current) => {
+        const next = [...current, msg]
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(next.slice(-50)))
+        } catch {}
+        return next
+      })
+    } catch {}
+  }
 
   const handleSendMessage = async (textToSend?: string) => {
     const text = (textToSend || prompt).trim()
@@ -112,8 +196,8 @@ export const AiAssistantModal: React.FC = () => {
       timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
     }
 
-    setMessages(prev => [...prev, userMsg])
     setPrompt('')
+    await saveMessageToStorage(userMsg, 'user')
     setIsLoading(true)
 
     try {
@@ -139,7 +223,7 @@ export const AiAssistantModal: React.FC = () => {
         timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
       }
 
-      setMessages(prev => [...prev, aiMsg])
+      await saveMessageToStorage(aiMsg, 'assistant')
     } catch (err: any) {
       const errorMsg: Message = {
         id: `ai-err-${Date.now()}`,
@@ -159,7 +243,22 @@ export const AiAssistantModal: React.FC = () => {
     setTimeout(() => setCopiedId(null), 2000)
   }
 
-  const handleClearChat = () => {
+  const handleClearChat = async () => {
+    const storageKey = `hris_ai_chat_${user?.id || 'guest'}_${currentRole}`
+    localStorage.removeItem(storageKey)
+
+    if (user?.id) {
+      try {
+        await supabase
+          .from('ai_chat_history')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('role', currentRole)
+      } catch (err) {
+        console.debug('Notice clearing ai_chat_history:', err)
+      }
+    }
+
     setMessages([
       {
         id: 'reset-welcome',
@@ -210,7 +309,7 @@ export const AiAssistantModal: React.FC = () => {
                     </Badge>
                   </div>
                   <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-                    <Zap className="h-3 w-3 text-amber-500" /> Bertenaga Google Gemini 3.8 Flash
+                    <Zap className="h-3 w-3 text-amber-500" /> Bertenaga Google Gemini Multimodel AI
                   </p>
                 </div>
               </div>
@@ -301,23 +400,34 @@ export const AiAssistantModal: React.FC = () => {
                     >
                       <span>{msg.timestamp}</span>
                       {msg.sender === 'ai' && (
-                        <button
-                          type="button"
-                          onClick={() => handleCopy(msg.id, msg.text)}
-                          className="flex items-center gap-1 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer"
-                        >
-                          {copiedId === msg.id ? (
-                            <>
-                              <Check className="h-3 w-3 text-emerald-500" />
-                              <span className="text-emerald-500">Tersalin!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="h-3 w-3" />
-                              <span>Salin</span>
-                            </>
-                          )}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => exportAiContentToPdf(msg.text, currentRole)}
+                            className="flex items-center gap-1 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer font-medium text-blue-600 dark:text-blue-400"
+                            title="Unduh Soal & Materi ke format PDF"
+                          >
+                            <FileDown className="h-3 w-3" />
+                            <span>Cetak PDF Soal</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(msg.id, msg.text)}
+                            className="flex items-center gap-1 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer"
+                          >
+                            {copiedId === msg.id ? (
+                              <>
+                                <Check className="h-3 w-3 text-emerald-500" />
+                                <span className="text-emerald-500">Tersalin!</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="h-3 w-3" />
+                                <span>Salin</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -333,7 +443,7 @@ export const AiAssistantModal: React.FC = () => {
                   <div className="bg-white dark:bg-slate-800 rounded-2xl rounded-tl-xs px-4 py-3 border border-slate-200 dark:border-slate-700 text-xs flex items-center gap-2 shadow-xs">
                     <Loader2 className="h-3.5 w-3.5 text-indigo-600 animate-spin" />
                     <span className="text-slate-600 dark:text-slate-300 animate-pulse font-medium">
-                      Asisten AI sedang berpikir & menyusun respon...
+                      Asisten AI sedang menyusun materi & soal...
                     </span>
                   </div>
                 </div>

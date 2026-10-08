@@ -111,7 +111,10 @@ export const DashboardPage: React.FC = () => {
     setIsLoading(true)
     try {
       // Fetch Bimbel Reports
-      const { data: bimbelData, error: bimbelError } = await supabase
+      let bimbelData: any = null
+      let bimbelError: any = null
+
+      const firstAttempt = await supabase
         .from('laporan_bimbel')
         .select(`
           id,
@@ -127,6 +130,29 @@ export const DashboardPage: React.FC = () => {
           murid:murid_id ( nama, tingkat_kelas )
         `)
         .order('tanggal', { ascending: false })
+
+      bimbelData = firstAttempt.data
+      bimbelError = firstAttempt.error
+
+      if (bimbelError && bimbelError.message.includes('foto_kegiatan_url')) {
+        const fallbackRes = await supabase
+          .from('laporan_bimbel')
+          .select(`
+            id,
+            tutor_id,
+            murid_id,
+            tanggal,
+            mata_pelajaran,
+            topik,
+            ringkasan,
+            created_at,
+            tutor:tutor_id ( nama ),
+            murid:murid_id ( nama, tingkat_kelas )
+          `)
+          .order('tanggal', { ascending: false })
+        bimbelData = fallbackRes.data
+        bimbelError = fallbackRes.error
+      }
 
       if (bimbelError) console.warn('Bimbel fetch warning:', bimbelError.message)
       if (bimbelData) setBimbelList(bimbelData as unknown as LaporanBimbel[])

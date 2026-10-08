@@ -64,7 +64,10 @@ export const DashboardTutorPage: React.FC = () => {
       if (mData) setMuridList(mData as Murid[])
 
       // 2. Fetch tutor's reports
-      const { data: rData, error: rErr } = await supabase
+      let rData: any = null
+      let rErr: any = null
+
+      const firstAttempt = await supabase
         .from('laporan_bimbel')
         .select(`
           id,
@@ -83,6 +86,32 @@ export const DashboardTutorPage: React.FC = () => {
         `)
         .eq('tutor_id', user.id)
         .order('tanggal', { ascending: false })
+
+      rData = firstAttempt.data
+      rErr = firstAttempt.error
+
+      if (rErr && rErr.message.includes('foto_kegiatan_url')) {
+        const fallbackRes = await supabase
+          .from('laporan_bimbel')
+          .select(`
+            id,
+            tutor_id,
+            murid_id,
+            tanggal,
+            mata_pelajaran,
+            topik,
+            ringkasan,
+            created_at,
+            murid:murid_id (
+              nama,
+              tingkat_kelas
+            )
+          `)
+          .eq('tutor_id', user.id)
+          .order('tanggal', { ascending: false })
+        rData = fallbackRes.data
+        rErr = fallbackRes.error
+      }
 
       if (rErr) throw rErr
       if (rData) setReports(rData as unknown as LaporanBimbel[])
