@@ -1061,14 +1061,38 @@ export const DashboardPage: React.FC = () => {
                 </p>
               </div>
 
-              <Button
-                size="sm"
-                onClick={() => setIsAddEmployeeOpen(true)}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 text-xs shadow-md shadow-indigo-500/20"
-              >
-                <UserPlus className="h-4 w-4" />
-                <span>+ Daftarkan Karyawan Baru</span>
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      setIsLoading(true)
+                      const { error } = await supabase.rpc('sync_all_auth_users')
+                      if (error) console.warn('Sync note:', error.message)
+                      await fetchData()
+                    } catch (err) {
+                      await fetchData()
+                    } finally {
+                      setIsLoading(false)
+                    }
+                  }}
+                  className="text-xs text-indigo-700 border-indigo-200 hover:bg-indigo-50 dark:border-indigo-900 dark:text-indigo-400 gap-1.5"
+                  title="Sinkronkan seluruh user auth Supabase ke tabel profil karyawan"
+                >
+                  <RefreshCw className="h-3.5 w-3.5 text-indigo-600" />
+                  <span>Sinkronkan Database</span>
+                </Button>
+
+                <Button
+                  size="sm"
+                  onClick={() => setIsAddEmployeeOpen(true)}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 text-xs shadow-md shadow-indigo-500/20"
+                >
+                  <UserPlus className="h-4 w-4" />
+                  <span>+ Daftarkan Karyawan Baru</span>
+                </Button>
+              </div>
             </div>
 
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">

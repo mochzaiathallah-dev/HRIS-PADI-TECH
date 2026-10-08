@@ -310,7 +310,7 @@ EXCEPTION
 END $$;
 
 -- ==============================================================================
--- 15. OWNER EMPLOYEE MANAGEMENT & PASSWORD RESET FUNCTIONS
+-- 15. OWNER EMPLOYEE MANAGEMENT, FULL SYNC & PASSWORD RESET FUNCTIONS
 -- ==============================================================================
 
 -- Pastikan RLS users_profile mengizinkan Owner untuk manage
@@ -318,8 +318,8 @@ DROP POLICY IF EXISTS "Owner can manage all profiles" ON public.users_profile;
 CREATE POLICY "Owner can manage all profiles"
 ON public.users_profile FOR ALL
 TO authenticated
-USING (public.is_owner())
-WITH CHECK (public.is_owner());
+USING (public.is_owner() OR id = auth.uid())
+WITH CHECK (public.is_owner() OR id = auth.uid());
 
 CREATE OR REPLACE FUNCTION public.owner_create_employee(
     p_email TEXT,
@@ -333,6 +333,7 @@ SECURITY DEFINER
 SET search_path = public, auth, extensions
 AS $$
 DECLARE
+    existing_user_id UUID;
     new_user_id UUID;
     clean_email TEXT;
     target_role user_role;
@@ -351,34 +352,48 @@ BEGIN
         target_role := p_role::user_role;
     EXCEPTION
         WHEN OTHERS THEN
-            RAISE EXCEPTION 'Role % tidak valid! Pilih tutor atau host.', p_role;
+            RAISE EXCEPTION 'Role % tidak valid! Pilih tutor, host, atau owner.', p_role;
     END;
-
-    IF EXISTS (SELECT 1 FROM auth.users WHERE email = clean_email) THEN
-        RAISE EXCEPTION 'Email % sudah terdaftar di sistem. Gunakan email lain!', clean_email;
-    END IF;
 
     IF length(p_password) < 6 THEN
         RAISE EXCEPTION 'Password minimal 6 karakter!';
     END IF;
 
+    -- Cek jika akun sudah ada di auth.users sebelumnya (Self-healing)
+    SELECT id INTO existing_user_id FROM auth.users WHERE email = clean_email;
+
+    IF existing_user_id IS NOT NULL THEN
+        UPDATE auth.users
+        SET encrypted_password = crypt(p_password, gen_salt('bf')),
+            raw_user_meta_data = jsonb_build_object('nama', p_nama, 'role', target_role::text),
+            email_confirmed_at = COALESCE(email_confirmed_at, now()),
+            updated_at = now()
+        WHERE id = existing_user_id;
+
+        INSERT INTO public.users_profile (id, nama, role)
+        VALUES (existing_user_id, p_nama, target_role)
+        ON CONFLICT (id) DO UPDATE
+        SET nama = EXCLUDED.nama,
+            role = EXCLUDED.role,
+            updated_at = now();
+
+        RETURN jsonb_build_object(
+            'success', true,
+            'user_id', existing_user_id,
+            'email', clean_email,
+            'nama', p_nama,
+            'role', target_role::text,
+            'status', 'updated_and_synced'
+        );
+    END IF;
+
     new_user_id := gen_random_uuid();
 
-    -- Insert ke auth.users dengan status terverifikasi (email_confirmed_at = now())
-    -- Mencegah pengiriman email verifikasi sehingga 100% bebas dari 'email rate limit exceeded'
     INSERT INTO auth.users (
-        id,
-        instance_id,
-        aud,
-        role,
-        email,
-        encrypted_password,
-        email_confirmed_at,
-        raw_app_meta_data,
-        raw_user_meta_data,
-        created_at,
-        updated_at,
-        confirmation_token
+        id, instance_id, aud, role, email,
+        encrypted_password, email_confirmed_at,
+        raw_app_meta_data, raw_user_meta_data,
+        created_at, updated_at, confirmation_token
     )
     VALUES (
         new_user_id,
@@ -390,29 +405,20 @@ BEGIN
         now(),
         '{"provider":"email","providers":["email"]}'::jsonb,
         jsonb_build_object('nama', p_nama, 'role', target_role::text),
-        now(),
-        now(),
+        now(), now(),
         encode(gen_random_bytes(32), 'hex')
     );
 
     INSERT INTO auth.identities (
-        id,
-        user_id,
-        identity_data,
-        provider,
-        last_sign_in_at,
-        created_at,
-        updated_at,
-        provider_id
+        id, user_id, identity_data, provider,
+        last_sign_in_at, created_at, updated_at, provider_id
     )
     VALUES (
         gen_random_uuid(),
         new_user_id,
         jsonb_build_object('sub', new_user_id::text, 'email', clean_email),
         'email',
-        now(),
-        now(),
-        now(),
+        now(), now(), now(),
         new_user_id::text
     );
 
@@ -428,7 +434,8 @@ BEGIN
         'user_id', new_user_id,
         'email', clean_email,
         'nama', p_nama,
-        'role', target_role::text
+        'role', target_role::text,
+        'status', 'created'
     );
 END;
 $$;
@@ -467,6 +474,82 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.owner_delete_employee(
+    p_user_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+BEGIN
+    IF NOT public.is_owner() THEN
+        RAISE EXCEPTION 'Akses ditolak: Hanya akun Owner yang berhak menghapus karyawan!';
+    END IF;
+
+    IF p_user_id = auth.uid() THEN
+        RAISE EXCEPTION 'Tidak dapat menghapus akun Anda sendiri!';
+    END IF;
+
+    DELETE FROM public.laporan_bimbel WHERE tutor_id = p_user_id;
+    DELETE FROM public.laporan_tiktok WHERE host_id = p_user_id;
+    DELETE FROM public.users_profile WHERE id = p_user_id;
+    DELETE FROM auth.identities WHERE user_id = p_user_id;
+    DELETE FROM auth.users WHERE id = p_user_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'message', 'Akun karyawan dan data terkait berhasil dihapus total.'
+    );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.sync_all_auth_users()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+    r RECORD;
+    v_role user_role;
+    v_nama TEXT;
+    sync_count INT := 0;
+BEGIN
+    FOR r IN SELECT * FROM auth.users LOOP
+        BEGIN
+            v_role := (r.raw_user_meta_data->>'role')::user_role;
+        EXCEPTION
+            WHEN OTHERS THEN
+                v_role := 'tutor'::user_role;
+        END;
+
+        v_nama := COALESCE(
+            r.raw_user_meta_data->>'nama',
+            r.raw_user_meta_data->>'name',
+            split_part(r.email, '@', 1)
+        );
+
+        INSERT INTO public.users_profile (id, nama, role)
+        VALUES (r.id, v_nama, v_role)
+        ON CONFLICT (id) DO UPDATE
+        SET nama = EXCLUDED.nama,
+            role = EXCLUDED.role,
+            updated_at = now();
+
+        sync_count := sync_count + 1;
+    END LOOP;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'synced_count', sync_count
+    );
+END;
+$$;
+
 GRANT EXECUTE ON FUNCTION public.owner_create_employee(TEXT, TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.owner_reset_employee_password(UUID, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.owner_delete_employee(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.sync_all_auth_users() TO authenticated;
+
 
