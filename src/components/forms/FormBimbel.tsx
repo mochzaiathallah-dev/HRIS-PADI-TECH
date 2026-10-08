@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
 import { Murid, LaporanBimbel } from '@/types'
 import { compressClientImage, CompressionResult, formatFileSize } from '@/lib/imageCompressor'
+import { parsePhotoUrls, serializePhotoUrls, formatWhatsAppPhotoLinks } from '@/lib/photoUtils'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -28,8 +29,7 @@ import {
   X,
   Share2,
   Edit,
-  Trash2,
-  Eye
+  Trash2
 } from 'lucide-react'
 
 const bimbelSchema = z.object({
@@ -71,16 +71,17 @@ export const FormBimbel: React.FC<FormBimbelProps> = ({
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isCompressing, setIsCompressing] = useState(false)
-  const [compressionData, setCompressionData] = useState<CompressionResult | null>(null)
+  const [compressedImages, setCompressedImages] = useState<CompressionResult[]>([])
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [lastSubmittedReport, setLastSubmittedReport] = useState<{
     namaMurid: string
+    kelas?: string
     tanggal: string
     mapel: string
     topik: string
     ringkasan: string
-    fotoUrl?: string | null
+    fotoUrls: string[]
   } | null>(null)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
 
@@ -194,33 +195,58 @@ export const FormBimbel: React.FC<FormBimbelProps> = ({
     fetchHistory()
   }, [fetchMurid, fetchHistory])
 
-  // 3. Client-Side Image Selection & Compression
+  // 3. Client-Side Image Selection & Compression (Mendukung Lebih dari 1 Foto, Auto WebP)
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const files = e.target.files
+    if (!files || files.length === 0) return
 
     setIsCompressing(true)
     setErrorMessage(null)
 
     try {
-      const result = await compressClientImage(file)
-      setCompressionData(result)
+      const remainingSlots = 5 - compressedImages.length
+      if (remainingSlots <= 0) {
+        alert('Maksimal 5 foto dokumentasi per sesi mengajar.')
+        setIsCompressing(false)
+        return
+      }
+
+      const filesToProcess = Array.from(files).slice(0, remainingSlots)
+      const newCompressed: CompressionResult[] = []
+
+      for (const file of filesToProcess) {
+        const res = await compressClientImage(file)
+        newCompressed.push(res)
+      }
+
+      setCompressedImages((prev) => [...prev, ...newCompressed])
     } catch (err) {
       console.error('Compression error:', err)
       setErrorMessage('Gagal memproses gambar. Pastikan format file JPG, PNG, atau WEBP.')
     } finally {
       setIsCompressing(false)
+      e.target.value = ''
     }
   }
 
-  const removeSelectedImage = () => {
-    if (compressionData?.previewUrl) {
-      URL.revokeObjectURL(compressionData.previewUrl)
-    }
-    setCompressionData(null)
+  const removeSelectedImage = (index: number) => {
+    setCompressedImages((prev) => {
+      const target = prev[index]
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl)
+      }
+      return prev.filter((_, i) => i !== index)
+    })
   }
 
-  // 4. WhatsApp Share Helper
+  const clearAllImages = () => {
+    compressedImages.forEach((c) => {
+      if (c.previewUrl) URL.revokeObjectURL(c.previewUrl)
+    })
+    setCompressedImages([])
+  }
+
+  // 4. WhatsApp Share Helper (Format Bersih Tanpa Teks Bawah)
   const shareToWhatsApp = (report: {
     namaMurid: string
     kelas?: string
@@ -228,8 +254,10 @@ export const FormBimbel: React.FC<FormBimbelProps> = ({
     mapel: string
     topik: string
     ringkasan: string
-    fotoUrl?: string | null
+    fotoUrls?: string[]
   }) => {
+    const photoSection = formatWhatsAppPhotoLinks(report.fotoUrls || [])
+
     const text = `*LAPORAN KEGIATAN BELAJAR - BIMBEL PADI TECH*
 
 📅 *Tanggal Sesi:* ${report.tanggal}
@@ -238,16 +266,13 @@ export const FormBimbel: React.FC<FormBimbelProps> = ({
 🎯 *Topik / Materi:* ${report.topik}
 
 📝 *Catatan & Evaluasi Pembelajaran:*
-${report.ringkasan}
-${report.fotoUrl ? `\n📷 *Dokumentasi Pembelajaran:*\n${report.fotoUrl}` : ''}
-
-_Terima kasih atas kerja samanya. Laporan resmi terverifikasi HRIS PADI TECH._`
+${report.ringkasan}${photoSection}`
 
     const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`
     window.open(waUrl, '_blank')
   }
 
-  // 5. Submit Handler
+  // 5. Submit Handler (Upload Semua Foto & Simpan ke Supabase)
   const onSubmit = async (values: BimbelFormValues) => {
     if (!user?.id) {
       setErrorMessage('Sesi otentikasi tidak ditemukan. Silakan login ulang.')
@@ -259,29 +284,34 @@ _Terima kasih atas kerja samanya. Laporan resmi terverifikasi HRIS PADI TECH._`
     setSubmitSuccess(null)
 
     try {
-      let fotoKegiatanUrl: string | null = null
+      const uploadedUrls: string[] = []
 
-      // A. Upload Foto Terkompresi ke Supabase Storage (Bucket bukti_tiktok)
-      if (compressionData?.file) {
-        const fileExt = 'webp'
-        const fileName = `bimbel/${user.id}/${Date.now()}_dokumentasi.${fileExt}`
+      // A. Upload Semua Foto Terkompresi ke Supabase Storage (Bucket bukti_tiktok)
+      if (compressedImages.length > 0) {
+        for (let idx = 0; idx < compressedImages.length; idx++) {
+          const item = compressedImages[idx]
+          const fileExt = 'webp'
+          const fileName = `bimbel/${user.id}/${Date.now()}_${idx + 1}.${fileExt}`
 
-        const { error: uploadError } = await supabase.storage
-          .from('bukti_tiktok')
-          .upload(fileName, compressionData.file, {
-            cacheControl: '3600',
-            upsert: true,
-          })
-
-        if (!uploadError) {
-          const { data: publicUrlData } = supabase.storage
+          const { error: uploadError } = await supabase.storage
             .from('bukti_tiktok')
-            .getPublicUrl(fileName)
-          fotoKegiatanUrl = publicUrlData.publicUrl
-        } else {
-          console.warn('Storage upload note:', uploadError.message)
+            .upload(fileName, item.file, {
+              cacheControl: '3600',
+              upsert: true,
+            })
+
+          if (!uploadError) {
+            const { data: publicUrlData } = supabase.storage
+              .from('bukti_tiktok')
+              .getPublicUrl(fileName)
+            uploadedUrls.push(publicUrlData.publicUrl)
+          } else {
+            console.warn('Storage upload note:', uploadError.message)
+          }
         }
       }
+
+      const serializedFotoUrl = serializePhotoUrls(uploadedUrls)
 
       // B. Insert Data Laporan Bimbel ke Supabase Table
       const insertPayload: any = {
@@ -291,7 +321,7 @@ _Terima kasih atas kerja samanya. Laporan resmi terverifikasi HRIS PADI TECH._`
         mata_pelajaran: values.mata_pelajaran.trim(),
         topik: values.topik.trim(),
         ringkasan: values.ringkasan.trim(),
-        foto_kegiatan_url: fotoKegiatanUrl,
+        foto_kegiatan_url: serializedFotoUrl,
       }
 
       let { error } = await supabase.from('laporan_bimbel').insert(insertPayload)
@@ -308,16 +338,17 @@ _Terima kasih atas kerja samanya. Laporan resmi terverifikasi HRIS PADI TECH._`
       const muridObj = muridList.find(m => m.id === values.murid_id)
 
       setLastSubmittedReport({
-        namaMurid: muridObj ? `${muridObj.nama} (${muridObj.tingkat_kelas})` : 'Siswa',
+        namaMurid: muridObj ? muridObj.nama : 'Siswa',
+        kelas: muridObj?.tingkat_kelas,
         tanggal: values.tanggal,
         mapel: values.mata_pelajaran.trim(),
         topik: values.topik.trim(),
         ringkasan: values.ringkasan.trim(),
-        fotoUrl: fotoKegiatanUrl,
+        fotoUrls: uploadedUrls,
       })
 
-      setSubmitSuccess('Laporan sesi bimbel & dokumentasi berhasil tersimpan ke Supabase!')
-      removeSelectedImage()
+      setSubmitSuccess(`Laporan sesi bimbel & ${uploadedUrls.length > 0 ? `${uploadedUrls.length} dokumentasi foto ` : ''}berhasil tersimpan ke Supabase!`)
+      clearAllImages()
       reset({
         tanggal: todayStr,
         murid_id: '',
@@ -367,19 +398,37 @@ _Terima kasih atas kerja samanya. Laporan resmi terverifikasi HRIS PADI TECH._`
                   <span>{submitSuccess}</span>
                 </div>
                 {lastSubmittedReport && (
-                  <div className="pt-2 border-t border-emerald-200 dark:border-emerald-800/80 flex items-center justify-between">
-                    <span className="text-[11px] text-emerald-700 dark:text-emerald-300">
-                      Bagikan langsung ke orang tua siswa:
-                    </span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => shareToWhatsApp(lastSubmittedReport)}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-7 gap-1.5 shadow-xs"
-                    >
-                      <Share2 className="h-3 w-3" />
-                      Kirim ke WhatsApp
-                    </Button>
+                  <div className="pt-2 border-t border-emerald-200 dark:border-emerald-800/80 space-y-2">
+                    {lastSubmittedReport.fotoUrls.length > 0 && (
+                      <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                        <span className="text-[10px] text-emerald-800 dark:text-emerald-200 font-medium shrink-0">
+                          Foto Terlampir ({lastSubmittedReport.fotoUrls.length}):
+                        </span>
+                        {lastSubmittedReport.fotoUrls.map((url, i) => (
+                          <img
+                            key={i}
+                            src={url}
+                            alt={`Preview ${i + 1}`}
+                            className="h-10 w-10 rounded-md object-cover border border-emerald-300 dark:border-emerald-700 cursor-pointer shadow-xs hover:opacity-85"
+                            onClick={() => setPreviewImage(url)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                        Bagikan langsung ke orang tua siswa:
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => shareToWhatsApp(lastSubmittedReport)}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-7 gap-1.5 shadow-xs"
+                      >
+                        <Share2 className="h-3 w-3" />
+                        Kirim ke WhatsApp
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -520,53 +569,74 @@ _Terima kasih atas kerja samanya. Laporan resmi terverifikasi HRIS PADI TECH._`
                 </span>
               </Label>
 
-              {!compressionData ? (
-                <label className="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-800 hover:border-blue-400 bg-slate-50/50 dark:bg-slate-900/50 cursor-pointer transition-colors group">
-                  <ImageIcon className="h-6 w-6 text-slate-400 group-hover:text-blue-500 mb-1 transition-colors" />
-                  <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                    {isCompressing ? 'Mengompresi gambar ke WebP...' : 'Pilih Foto / Screenshot'}
-                  </span>
+              {/* Daftar Foto yang Telah Dipilih & Terkompresi */}
+              {compressedImages.length > 0 && (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {compressedImages.map((img, idx) => (
+                      <div
+                        key={idx}
+                        className="relative rounded-xl border border-blue-200 dark:border-blue-900 p-2 bg-blue-50/40 dark:bg-blue-950/20 flex items-center gap-2.5"
+                      >
+                        <img
+                          src={img.previewUrl}
+                          alt={`Foto ${idx + 1}`}
+                          className="h-12 w-12 rounded-lg object-cover border border-slate-200 dark:border-slate-700 cursor-pointer shrink-0 shadow-xs"
+                          onClick={() => setPreviewImage(img.previewUrl)}
+                        />
+                        <div className="flex-1 min-w-0 text-xs">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-[11px] text-slate-800 dark:text-slate-200">
+                              Foto {idx + 1}
+                            </span>
+                            <Badge variant="outline" className="text-[9px] px-1.5 py-0 bg-emerald-50 text-emerald-700 border-emerald-300">
+                              Hemat {img.ratioPercent}%
+                            </Badge>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                            {formatFileSize(img.originalSizeKB)} ➔ {formatFileSize(img.compressedSizeKB)} (WebP)
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeSelectedImage(idx)}
+                          disabled={isSubmitting}
+                          className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50"
+                          title="Hapus Foto Ini"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Upload Input Button (Maksimal 5 Foto) */}
+              {compressedImages.length < 5 && (
+                <label className="flex flex-col items-center justify-center p-3.5 rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-800 hover:border-blue-400 bg-slate-50/50 dark:bg-slate-900/50 cursor-pointer transition-colors group">
+                  <div className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+                    <ImageIcon className="h-4 w-4 text-slate-400 group-hover:text-blue-500 transition-colors" />
+                    <span>
+                      {isCompressing
+                        ? 'Mengompresi gambar otomatis ke WebP...'
+                        : compressedImages.length > 0
+                        ? `Tambah Foto Dokumentasi (${compressedImages.length}/5)`
+                        : 'Pilih Foto Dokumentasi Belajar (Bisa Lebih dari 1 Foto)'}
+                    </span>
+                  </div>
                   <span className="text-[10px] text-muted-foreground mt-0.5">
-                    JPG/PNG/WEBP (otomatis diperkecil & hemat kuota)
+                    Maksimal 5 foto • JPG/PNG/WEBP (otomatis dikompresi ringan & hemat kuota)
                   </span>
                   <input
                     type="file"
                     accept="image/*"
+                    multiple
                     onChange={handleImageSelect}
                     disabled={isSubmitting || isCompressing}
                     className="hidden"
                   />
                 </label>
-              ) : (
-                <div className="relative rounded-xl border border-slate-200 dark:border-slate-800 p-2.5 bg-slate-50 dark:bg-slate-900/80 flex items-center gap-3">
-                  <img
-                    src={compressionData.previewUrl}
-                    alt="Preview"
-                    className="h-14 w-14 rounded-lg object-cover border border-slate-200 dark:border-slate-700 cursor-pointer"
-                    onClick={() => setPreviewImage(compressionData.previewUrl)}
-                  />
-                  <div className="flex-1 min-w-0 space-y-0.5">
-                    <div className="flex items-center gap-1.5">
-                      <Badge variant="outline" className="text-[9px] px-1.5 py-0 bg-emerald-50 text-emerald-700 border-emerald-300">
-                        Hemat {compressionData.ratioPercent}%
-                      </Badge>
-                      <span className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 truncate">
-                        Format WebP
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground">
-                      {formatFileSize(compressionData.originalSizeKB)} ➔ {formatFileSize(compressionData.compressedSizeKB)}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={removeSelectedImage}
-                    disabled={isSubmitting}
-                    className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
               )}
             </div>
 
@@ -642,7 +712,7 @@ _Terima kasih atas kerja samanya. Laporan resmi terverifikasi HRIS PADI TECH._`
                             mapel: item.mata_pelajaran,
                             topik: item.topik,
                             ringkasan: item.ringkasan,
-                            fotoUrl: item.foto_kegiatan_url,
+                            fotoUrls: parsePhotoUrls(item.foto_kegiatan_url),
                           })
                         }
                         title="Bagikan ke WhatsApp"
@@ -689,18 +759,27 @@ _Terima kasih atas kerja samanya. Laporan resmi terverifikasi HRIS PADI TECH._`
                   </p>
 
                   {/* Thumbnail Foto Dokumentasi jika ada */}
-                  {item.foto_kegiatan_url && (
-                    <div className="pt-1.5 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setPreviewImage(item.foto_kegiatan_url || null)}
-                        className="flex items-center gap-1.5 text-[11px] text-blue-600 hover:underline font-medium"
-                      >
-                        <Eye className="h-3 w-3" />
-                        Lihat Foto Dokumentasi
-                      </button>
-                    </div>
-                  )}
+                  {(() => {
+                    const photos = parsePhotoUrls(item.foto_kegiatan_url)
+                    if (photos.length === 0) return null
+                    return (
+                      <div className="pt-1.5 flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] text-muted-foreground font-medium">
+                          Dokumentasi ({photos.length}):
+                        </span>
+                        {photos.map((url, i) => (
+                          <img
+                            key={i}
+                            src={url}
+                            alt={`Dokumentasi ${i + 1}`}
+                            className="h-9 w-9 rounded-md object-cover border border-slate-200 dark:border-slate-700 cursor-pointer shadow-xs hover:opacity-80 transition-opacity"
+                            onClick={() => setPreviewImage(url)}
+                            title="Klik untuk memperbesar"
+                          />
+                        ))}
+                      </div>
+                    )
+                  })()}
                 </div>
               ))}
             </div>

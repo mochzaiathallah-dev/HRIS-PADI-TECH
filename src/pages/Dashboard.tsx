@@ -15,6 +15,7 @@ import { EditMuridModal } from '@/components/dashboard/EditMuridModal'
 import { DeleteConfirmModal } from '@/components/dashboard/DeleteConfirmModal'
 import { AiAssistantModal } from '@/components/ai/AiAssistantModal'
 import { setupMidnightHeartbeatWatcher } from '@/lib/heartbeat'
+import { parsePhotoUrls } from '@/lib/photoUtils'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -902,17 +903,26 @@ export const DashboardPage: React.FC = () => {
                           </td>
                           <td className="p-3 text-right whitespace-nowrap">
                             <div className="flex items-center justify-end gap-1.5">
-                              {item.foto_kegiatan_url && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => setPreviewImage(item.foto_kegiatan_url!)}
-                                  className="h-7 w-7 p-0 text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400"
-                                  title="Lihat Foto Dokumentasi Mengajar"
-                                >
-                                  <ImageIcon className="h-3.5 w-3.5" />
-                                </Button>
-                              )}
+                              {item.foto_kegiatan_url && (() => {
+                                const photoUrls = parsePhotoUrls(item.foto_kegiatan_url)
+                                if (photoUrls.length === 0) return null
+                                return (
+                                  <div className="flex items-center gap-1">
+                                    {photoUrls.map((u, i) => (
+                                      <Button
+                                        key={i}
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setPreviewImage(u)}
+                                        className="h-7 w-7 p-0 text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400"
+                                        title={`Lihat Foto Dokumentasi ${i + 1} (${photoUrls.length} foto)`}
+                                      >
+                                        <ImageIcon className="h-3.5 w-3.5" />
+                                      </Button>
+                                    ))}
+                                  </div>
+                                )
+                              })()}
                               <Button
                                 variant="outline"
                                 size="sm"

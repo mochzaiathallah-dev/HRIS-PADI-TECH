@@ -8,6 +8,7 @@ import { DeleteConfirmModal } from '@/components/dashboard/DeleteConfirmModal'
 import { PdfExportModal } from '@/components/dashboard/PdfExportModal'
 import { AiAssistantModal } from '@/components/ai/AiAssistantModal'
 import { setupMidnightHeartbeatWatcher } from '@/lib/heartbeat'
+import { parsePhotoUrls, formatWhatsAppPhotoLinks } from '@/lib/photoUtils'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -24,7 +25,6 @@ import {
   Edit,
   Trash2,
   Share2,
-  Eye,
   RefreshCw,
   PlusCircle,
   ListFilter
@@ -179,8 +179,11 @@ export const DashboardTutorPage: React.FC = () => {
     }
   }
 
-  // WhatsApp Share Helper
+  // WhatsApp Share Helper (Format Bersih Tanpa Teks Bawah + Link Foto Dokumentasi)
   const shareToWhatsApp = (item: LaporanBimbel) => {
+    const photoUrls = parsePhotoUrls(item.foto_kegiatan_url)
+    const photoSection = formatWhatsAppPhotoLinks(photoUrls)
+
     const text = `*LAPORAN KEGIATAN BELAJAR - BIMBEL PADI TECH*
 
 📅 *Tanggal Sesi:* ${item.tanggal}
@@ -189,10 +192,7 @@ export const DashboardTutorPage: React.FC = () => {
 🎯 *Topik / Materi:* ${item.topik}
 
 📝 *Catatan & Evaluasi Pembelajaran:*
-${item.ringkasan}
-${item.foto_kegiatan_url ? `\n📷 *Dokumentasi Pembelajaran:*\n${item.foto_kegiatan_url}` : ''}
-
-_Terima kasih atas kerja samanya. Laporan resmi terverifikasi HRIS PADI TECH._`
+${item.ringkasan}${photoSection}`
 
     const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`
     window.open(waUrl, '_blank')
@@ -424,16 +424,27 @@ _Terima kasih atas kerja samanya. Laporan resmi terverifikasi HRIS PADI TECH._`
                           {item.ringkasan}
                         </p>
 
-                        {item.foto_kegiatan_url && (
-                          <button
-                            type="button"
-                            onClick={() => setPreviewImage(item.foto_kegiatan_url || null)}
-                            className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline pt-0.5"
-                          >
-                            <Eye className="h-3 w-3" />
-                            Lihat Foto Dokumentasi WebP
-                          </button>
-                        )}
+                        {(() => {
+                          const photos = parsePhotoUrls(item.foto_kegiatan_url)
+                          if (photos.length === 0) return null
+                          return (
+                            <div className="pt-1 flex flex-wrap items-center gap-1.5">
+                              <span className="text-[10px] text-muted-foreground font-medium">
+                                Dokumentasi ({photos.length}):
+                              </span>
+                              {photos.map((url, i) => (
+                                <img
+                                  key={i}
+                                  src={url}
+                                  alt={`Dokumentasi ${i + 1}`}
+                                  className="h-8 w-8 rounded-md object-cover border border-slate-200 dark:border-slate-700 cursor-pointer shadow-xs hover:opacity-80 transition-opacity"
+                                  onClick={() => setPreviewImage(url)}
+                                  title="Klik untuk memperbesar"
+                                />
+                              ))}
+                            </div>
+                          )
+                        })()}
                       </div>
 
                       {/* Action Buttons */}
