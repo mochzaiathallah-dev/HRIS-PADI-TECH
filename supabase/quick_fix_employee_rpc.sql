@@ -1,20 +1,127 @@
 -- ==============================================================================
--- HRIS PADI TECH - SQL PENDAFTARAN KARYAWAN & RESET PASSWORD (BYPASS RATE LIMIT)
+-- HRIS PADI TECH - SQL FULL CRUD & REALTIME POWERSCRIPT
 -- ==============================================================================
--- Jalankan skrip ini di Supabase SQL Editor untuk mengaktifkan pendaftaran karyawan
--- tanpa batas email rate limit (email langsung diverifikasi otomatis).
+-- Jalankan skrip ini di Supabase SQL Editor untuk mengaktifkan:
+-- 1. Full CRUD RLS untuk Owner di semua tabel (users_profile, murid, laporan_bimbel, laporan_tiktok)
+-- 2. Realtime publication untuk semua tabel
+-- 3. Fungsi Tambah Karyawan Bebas Email Rate Limit
+-- 4. Fungsi Ganti Sandi Karyawan
+-- 5. Fungsi Hapus Karyawan (Cascade)
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- 1. Kebijakan RLS Owner untuk mengelola seluruh profil karyawan
+-- ------------------------------------------------------------------------------
+-- 1. RLS POLICIES (FULL CRUD OWNER & ACCESS CONTROL)
+-- ------------------------------------------------------------------------------
+
+-- Helper is_owner
+CREATE OR REPLACE FUNCTION public.is_owner()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.users_profile
+        WHERE id = auth.uid() AND role = 'owner'
+    );
+$$;
+
+-- RLS users_profile
+ALTER TABLE public.users_profile ENABLE ROW LEVEL SECURITY;
+
 DROP POLICY IF EXISTS "Owner can manage all profiles" ON public.users_profile;
 CREATE POLICY "Owner can manage all profiles"
 ON public.users_profile FOR ALL
 TO authenticated
+USING (public.is_owner() OR id = auth.uid())
+WITH CHECK (public.is_owner() OR id = auth.uid());
+
+-- RLS murid
+ALTER TABLE public.murid ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated users can read murid" ON public.murid;
+CREATE POLICY "Authenticated users can read murid"
+ON public.murid FOR SELECT
+TO authenticated
+USING (true);
+
+DROP POLICY IF EXISTS "Owner can manage murid" ON public.murid;
+CREATE POLICY "Owner can manage murid"
+ON public.murid FOR ALL
+TO authenticated
 USING (public.is_owner())
 WITH CHECK (public.is_owner());
 
--- 2. Fungsi Pendaftaran Karyawan oleh Owner (Instan & Bebas Rate Limit)
+-- RLS laporan_bimbel
+ALTER TABLE public.laporan_bimbel ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Tutor view own or owner view all bimbel" ON public.laporan_bimbel;
+CREATE POLICY "Tutor view own or owner view all bimbel"
+ON public.laporan_bimbel FOR SELECT
+TO authenticated
+USING (tutor_id = auth.uid() OR public.is_owner());
+
+DROP POLICY IF EXISTS "Tutor insert own bimbel report" ON public.laporan_bimbel;
+CREATE POLICY "Tutor insert own bimbel report"
+ON public.laporan_bimbel FOR INSERT
+TO authenticated
+WITH CHECK (tutor_id = auth.uid() OR public.is_owner());
+
+DROP POLICY IF EXISTS "Owner can manage all bimbel" ON public.laporan_bimbel;
+CREATE POLICY "Owner can manage all bimbel"
+ON public.laporan_bimbel FOR ALL
+TO authenticated
+USING (public.is_owner())
+WITH CHECK (public.is_owner());
+
+-- RLS laporan_tiktok
+ALTER TABLE public.laporan_tiktok ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Host view own or owner view all tiktok" ON public.laporan_tiktok;
+CREATE POLICY "Host view own or owner view all tiktok"
+ON public.laporan_tiktok FOR SELECT
+TO authenticated
+USING (host_id = auth.uid() OR public.is_owner());
+
+DROP POLICY IF EXISTS "Host insert own tiktok report" ON public.laporan_tiktok;
+CREATE POLICY "Host insert own tiktok report"
+ON public.laporan_tiktok FOR INSERT
+TO authenticated
+WITH CHECK (host_id = auth.uid() OR public.is_owner());
+
+DROP POLICY IF EXISTS "Owner can manage all tiktok" ON public.laporan_tiktok;
+CREATE POLICY "Owner can manage all tiktok"
+ON public.laporan_tiktok FOR ALL
+TO authenticated
+USING (public.is_owner())
+WITH CHECK (public.is_owner());
+
+-- ------------------------------------------------------------------------------
+-- 2. SUPABASE REALTIME REPLICATION (FULL 4 TABLES)
+-- ------------------------------------------------------------------------------
+
+DO $$ BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.users_profile;
+EXCEPTION WHEN OTHERS THEN null; END $$;
+
+DO $$ BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.murid;
+EXCEPTION WHEN OTHERS THEN null; END $$;
+
+DO $$ BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.laporan_bimbel;
+EXCEPTION WHEN OTHERS THEN null; END $$;
+
+DO $$ BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.laporan_tiktok;
+EXCEPTION WHEN OTHERS THEN null; END $$;
+
+-- ------------------------------------------------------------------------------
+-- 3. FUNGSI DAFTAR KARYAWAN (BYPASS EMAIL RATE LIMIT)
+-- ------------------------------------------------------------------------------
+
 CREATE OR REPLACE FUNCTION public.owner_create_employee(
     p_email TEXT,
     p_nama TEXT,
@@ -31,7 +138,6 @@ DECLARE
     clean_email TEXT;
     target_role user_role;
 BEGIN
-    -- Validasi hanya owner yang bisa mendaftarkan
     IF NOT public.is_owner() THEN
         RAISE EXCEPTION 'Akses ditolak: Hanya akun Owner yang berhak mendaftarkan karyawan baru!';
     END IF;
@@ -46,7 +152,7 @@ BEGIN
         target_role := p_role::user_role;
     EXCEPTION
         WHEN OTHERS THEN
-            RAISE EXCEPTION 'Role % tidak valid! Pilih tutor atau host.', p_role;
+            RAISE EXCEPTION 'Role % tidak valid! Pilih tutor, host, atau owner.', p_role;
     END;
 
     IF EXISTS (SELECT 1 FROM auth.users WHERE email = clean_email) THEN
@@ -59,20 +165,12 @@ BEGIN
 
     new_user_id := gen_random_uuid();
 
-    -- Insert ke auth.users dengan email_confirmed_at = now() (Bebas Email Rate Limit)
+    -- Insert ke auth.users (email_confirmed_at = now() bebas rate limit)
     INSERT INTO auth.users (
-        id,
-        instance_id,
-        aud,
-        role,
-        email,
-        encrypted_password,
-        email_confirmed_at,
-        raw_app_meta_data,
-        raw_user_meta_data,
-        created_at,
-        updated_at,
-        confirmation_token
+        id, instance_id, aud, role, email,
+        encrypted_password, email_confirmed_at,
+        raw_app_meta_data, raw_user_meta_data,
+        created_at, updated_at, confirmation_token
     )
     VALUES (
         new_user_id,
@@ -84,34 +182,23 @@ BEGIN
         now(),
         '{"provider":"email","providers":["email"]}'::jsonb,
         jsonb_build_object('nama', p_nama, 'role', target_role::text),
-        now(),
-        now(),
+        now(), now(),
         encode(gen_random_bytes(32), 'hex')
     );
 
-    -- Insert ke auth.identities
     INSERT INTO auth.identities (
-        id,
-        user_id,
-        identity_data,
-        provider,
-        last_sign_in_at,
-        created_at,
-        updated_at,
-        provider_id
+        id, user_id, identity_data, provider,
+        last_sign_in_at, created_at, updated_at, provider_id
     )
     VALUES (
         gen_random_uuid(),
         new_user_id,
         jsonb_build_object('sub', new_user_id::text, 'email', clean_email),
         'email',
-        now(),
-        now(),
-        now(),
+        now(), now(), now(),
         new_user_id::text
     );
 
-    -- Sinkronisasi ke public.users_profile
     INSERT INTO public.users_profile (id, nama, role)
     VALUES (new_user_id, p_nama, target_role)
     ON CONFLICT (id) DO UPDATE
@@ -129,7 +216,10 @@ BEGIN
 END;
 $$;
 
--- 3. Fungsi Reset Password Karyawan oleh Owner
+-- ------------------------------------------------------------------------------
+-- 4. FUNGSI GANTI SANDI KARYAWAN OLEH OWNER
+-- ------------------------------------------------------------------------------
+
 CREATE OR REPLACE FUNCTION public.owner_reset_employee_password(
     p_user_id UUID,
     p_new_password TEXT
@@ -164,6 +254,42 @@ BEGIN
 END;
 $$;
 
--- Berikan izin akses eksekusi ke authenticated user (Owner)
+-- ------------------------------------------------------------------------------
+-- 5. FUNGSI HAPUS KARYAWAN OLEH OWNER (CASCADE SAFE)
+-- ------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.owner_delete_employee(
+    p_user_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+BEGIN
+    IF NOT public.is_owner() THEN
+        RAISE EXCEPTION 'Akses ditolak: Hanya akun Owner yang berhak menghapus karyawan!';
+    END IF;
+
+    IF p_user_id = auth.uid() THEN
+        RAISE EXCEPTION 'Tidak dapat menghapus akun Anda sendiri!';
+    END IF;
+
+    -- Bersihkan relasi foreign key
+    DELETE FROM public.laporan_bimbel WHERE tutor_id = p_user_id;
+    DELETE FROM public.laporan_tiktok WHERE host_id = p_user_id;
+    DELETE FROM public.users_profile WHERE id = p_user_id;
+    DELETE FROM auth.identities WHERE user_id = p_user_id;
+    DELETE FROM auth.users WHERE id = p_user_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'message', 'Akun karyawan dan data terkait berhasil dihapus.'
+    );
+END;
+$$;
+
+-- Berikan izin akses
 GRANT EXECUTE ON FUNCTION public.owner_create_employee(TEXT, TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.owner_reset_employee_password(UUID, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.owner_delete_employee(UUID) TO authenticated;

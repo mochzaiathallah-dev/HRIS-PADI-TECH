@@ -6,7 +6,13 @@ import { exportBimbelToCSV, exportTikTokToCSV } from '@/lib/csvExporter'
 import { generateStudentReportPDF } from '@/lib/pdfExporter'
 import { PdfExportModal } from '@/components/dashboard/PdfExportModal'
 import { AddEmployeeModal } from '@/components/dashboard/AddEmployeeModal'
+import { EditEmployeeModal } from '@/components/dashboard/EditEmployeeModal'
 import { ResetPasswordModal } from '@/components/dashboard/ResetPasswordModal'
+import { EditBimbelModal } from '@/components/dashboard/EditBimbelModal'
+import { EditTikTokModal } from '@/components/dashboard/EditTikTokModal'
+import { AddMuridModal } from '@/components/dashboard/AddMuridModal'
+import { EditMuridModal } from '@/components/dashboard/EditMuridModal'
+import { DeleteConfirmModal } from '@/components/dashboard/DeleteConfirmModal'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -19,12 +25,11 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  BarChart,
-  Bar,
   PieChart,
   Pie,
   Cell,
-  Legend,
+  BarChart,
+  Bar,
 } from 'recharts'
 import {
   LogOut,
@@ -32,7 +37,6 @@ import {
   GraduationCap,
   Video,
   FileDown,
-  FileText,
   Search,
   Eye,
   RefreshCw,
@@ -44,8 +48,11 @@ import {
   Users,
   UserPlus,
   KeyRound,
-  ShieldCheck,
-  UserCheck
+  UserCheck,
+  Edit,
+  Trash2,
+  BookOpen,
+  Plus
 } from 'lucide-react'
 
 const CHART_COLORS = ['#3b82f6', '#ec4899', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4']
@@ -62,16 +69,37 @@ export const DashboardPage: React.FC = () => {
   const [realtimePulse, setRealtimePulse] = useState(false)
 
   // Filter States
-  const [activeTab, setActiveTab] = useState<'overview' | 'bimbel' | 'tiktok' | 'karyawan'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'bimbel' | 'tiktok' | 'karyawan' | 'murid'>('overview')
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [filterMurid, setFilterMurid] = useState<string>('all')
   const [filterHost, setFilterHost] = useState<string>('all')
 
-  // Modal States
-  const [isPdfModalOpen, setIsPdfModalOpen] = useState(false)
+  // Modal States - Employee
   const [isAddEmployeeOpen, setIsAddEmployeeOpen] = useState(false)
+  const [editEmployeeTarget, setEditEmployeeTarget] = useState<UserProfile | null>(null)
   const [resetEmployeeTarget, setResetEmployeeTarget] = useState<UserProfile | null>(null)
+
+  // Modal States - Bimbel & TikTok
+  const [editBimbelTarget, setEditBimbelTarget] = useState<LaporanBimbel | null>(null)
+  const [editTiktokTarget, setEditTiktokTarget] = useState<LaporanTiktok | null>(null)
+
+  // Modal States - Murid
+  const [isAddMuridOpen, setIsAddMuridOpen] = useState(false)
+  const [editMuridTarget, setEditMuridTarget] = useState<Murid | null>(null)
+
+  // Modal States - Delete Confirm
+  const [deleteTarget, setDeleteTarget] = useState<{
+    type: 'employee' | 'bimbel' | 'tiktok' | 'murid'
+    id: string
+    name: string
+    title: string
+    desc: string
+  } | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  // Modal States - PDF & Photo Proof
+  const [isPdfModalOpen, setIsPdfModalOpen] = useState(false)
   const [preselectedMuridId, setPreselectedMuridId] = useState<string | undefined>(undefined)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
 
@@ -79,7 +107,7 @@ export const DashboardPage: React.FC = () => {
   const fetchData = useCallback(async () => {
     setIsLoading(true)
     try {
-      // Fetch Bimbel Reports with joins
+      // Fetch Bimbel Reports
       const { data: bimbelData, error: bimbelError } = await supabase
         .from('laporan_bimbel')
         .select(`
@@ -99,7 +127,7 @@ export const DashboardPage: React.FC = () => {
       if (bimbelError) console.warn('Bimbel fetch warning:', bimbelError.message)
       if (bimbelData) setBimbelList(bimbelData as unknown as LaporanBimbel[])
 
-      // Fetch TikTok Reports with joins
+      // Fetch TikTok Reports
       const { data: tiktokData, error: tiktokError } = await supabase
         .from('laporan_tiktok')
         .select(`
@@ -120,11 +148,12 @@ export const DashboardPage: React.FC = () => {
       if (tiktokData) setTiktokList(tiktokData as unknown as LaporanTiktok[])
 
       // Fetch Murid List
-      const { data: muridData } = await supabase
+      const { data: muridData, error: muridError } = await supabase
         .from('murid')
         .select('*')
         .order('nama', { ascending: true })
 
+      if (muridError) console.warn('Murid fetch warning:', muridError.message)
       if (muridData) setMuridList(muridData as Murid[])
 
       // Fetch All Employees (Users Profile)
@@ -142,30 +171,32 @@ export const DashboardPage: React.FC = () => {
     }
   }, [])
 
-  // 2. Realtime WebSocket Listener (Zero-Compute Push)
+  // 2. Realtime WebSocket Listener (Zero-Compute Realtime Sync on 4 Tables)
   useEffect(() => {
     fetchData()
 
     const channel = supabase
-      .channel('realtime_owner_channel')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'laporan_bimbel' },
-        () => {
-          setRealtimePulse(true)
-          setTimeout(() => setRealtimePulse(false), 2500)
-          fetchData()
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'laporan_tiktok' },
-        () => {
-          setRealtimePulse(true)
-          setTimeout(() => setRealtimePulse(false), 2500)
-          fetchData()
-        }
-      )
+      .channel('realtime_owner_full_sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'laporan_bimbel' }, () => {
+        setRealtimePulse(true)
+        setTimeout(() => setRealtimePulse(false), 2500)
+        fetchData()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'laporan_tiktok' }, () => {
+        setRealtimePulse(true)
+        setTimeout(() => setRealtimePulse(false), 2500)
+        fetchData()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users_profile' }, () => {
+        setRealtimePulse(true)
+        setTimeout(() => setRealtimePulse(false), 2500)
+        fetchData()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'murid' }, () => {
+        setRealtimePulse(true)
+        setTimeout(() => setRealtimePulse(false), 2500)
+        fetchData()
+      })
       .subscribe()
 
     return () => {
@@ -173,7 +204,55 @@ export const DashboardPage: React.FC = () => {
     }
   }, [fetchData])
 
-  // 3. Computed KPIs & Analytics
+  // 3. Confirm Delete Handler
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return
+    setIsDeleting(true)
+
+    try {
+      if (deleteTarget.type === 'employee') {
+        if (deleteTarget.id === user?.id) {
+          alert('Anda tidak dapat menghapus akun Owner yang sedang Anda gunakan!')
+          setIsDeleting(false)
+          return
+        }
+
+        // Coba via RPC untuk cascade bersih
+        const { error: rpcErr } = await supabase.rpc('owner_delete_employee', {
+          p_user_id: deleteTarget.id,
+        })
+
+        if (rpcErr) {
+          // Fallback direct delete dari users_profile
+          const { error: directErr } = await supabase
+            .from('users_profile')
+            .delete()
+            .eq('id', deleteTarget.id)
+
+          if (directErr) throw directErr
+        }
+      } else if (deleteTarget.type === 'bimbel') {
+        const { error } = await supabase.from('laporan_bimbel').delete().eq('id', deleteTarget.id)
+        if (error) throw error
+      } else if (deleteTarget.type === 'tiktok') {
+        const { error } = await supabase.from('laporan_tiktok').delete().eq('id', deleteTarget.id)
+        if (error) throw error
+      } else if (deleteTarget.type === 'murid') {
+        const { error } = await supabase.from('murid').delete().eq('id', deleteTarget.id)
+        if (error) throw error
+      }
+
+      await fetchData()
+      setDeleteTarget(null)
+    } catch (err: any) {
+      console.error('Delete error:', err)
+      alert(err.message || 'Gagal menghapus data. Periksa relasi data terkait.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  // 4. Computed Filtered Lists
   const filteredBimbel = useMemo(() => {
     return bimbelList.filter((item) => {
       const matchMonth = selectedMonth ? item.tanggal.startsWith(selectedMonth) : true
@@ -210,6 +289,17 @@ export const DashboardPage: React.FC = () => {
     })
   }, [employeeList, searchQuery])
 
+  const filteredMurid = useMemo(() => {
+    return muridList.filter((m) => {
+      if (!searchQuery) return true
+      return (
+        m.nama.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        m.tingkat_kelas.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    })
+  }, [muridList, searchQuery])
+
+  // KPIs
   const totalGMV = useMemo(() => {
     return filteredTiktok.reduce((acc, curr) => acc + Number(curr.gmv_rupiah || 0), 0)
   }, [filteredTiktok])
@@ -220,13 +310,12 @@ export const DashboardPage: React.FC = () => {
 
   const totalSesiBimbel = filteredBimbel.length
 
-  // Chart Data 1: GMV by Date
+  // Chart Data
   const gmvChartData = useMemo(() => {
     const map = new Map<string, number>()
     const sorted = [...filteredTiktok].sort((a, b) => new Date(a.tanggal).getTime() - new Date(b.tanggal).getTime())
     sorted.forEach((item) => {
-      const dateKey = item.tanggal
-      map.set(dateKey, (map.get(dateKey) || 0) + Number(item.gmv_rupiah || 0))
+      map.set(item.tanggal, (map.get(item.tanggal) || 0) + Number(item.gmv_rupiah || 0))
     })
     return Array.from(map.entries()).map(([tanggal, gmv]) => ({
       tanggal: tanggal.slice(5),
@@ -234,7 +323,6 @@ export const DashboardPage: React.FC = () => {
     }))
   }, [filteredTiktok])
 
-  // Chart Data 2: Bimbel Subject Breakdown
   const subjectChartData = useMemo(() => {
     const map = new Map<string, number>()
     filteredBimbel.forEach((item) => {
@@ -244,7 +332,6 @@ export const DashboardPage: React.FC = () => {
     return Array.from(map.entries()).map(([name, value]) => ({ name, value }))
   }, [filteredBimbel])
 
-  // Chart Data 3: Host GMV Comparison
   const hostChartData = useMemo(() => {
     const map = new Map<string, number>()
     filteredTiktok.forEach((item) => {
@@ -254,7 +341,6 @@ export const DashboardPage: React.FC = () => {
     return Array.from(map.entries()).map(([name, gmv]) => ({ name, gmv }))
   }, [filteredTiktok])
 
-  // Format IDR Helper
   const formatRupiah = (val: number) => {
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
@@ -285,13 +371,12 @@ export const DashboardPage: React.FC = () => {
     generateStudentReportPDF({
       namaSiswa: studentName,
       kelas: studentClass,
-      tutorNama: item.tutor?.nama || 'Nikita Khoirunnisa',
+      tutorNama: item.tutor?.nama || 'Tutor Bimbel',
       periodeBulan: monthLabel,
       sesiList: studentSessions.length > 0 ? studentSessions : [item],
     })
   }
 
-  // Distinct Hosts list
   const distinctHosts = useMemo(() => {
     const hostsMap = new Map<string, string>()
     tiktokList.forEach((t) => {
@@ -304,7 +389,7 @@ export const DashboardPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col font-sans">
-      {/* Top Navigation */}
+      {/* Header */}
       <header className="sticky top-0 z-30 w-full border-b bg-white/80 dark:bg-slate-900/80 backdrop-blur">
         <div className="container mx-auto flex h-16 items-center justify-between px-4 sm:px-8">
           <div className="flex items-center space-x-3">
@@ -336,7 +421,7 @@ export const DashboardPage: React.FC = () => {
             </Button>
             <div className="hidden md:flex flex-col text-right">
               <span className="text-xs font-semibold">{profile?.nama || user?.email}</span>
-              <span className="text-[11px] text-muted-foreground capitalize">Owner (Full RLS)</span>
+              <span className="text-[11px] text-muted-foreground capitalize">Owner (Full RLS & CRUD)</span>
             </div>
             <Button
               variant="outline"
@@ -357,14 +442,13 @@ export const DashboardPage: React.FC = () => {
         {realtimePulse && (
           <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs flex items-center gap-2 animate-in fade-in slide-in-from-top-2 shadow-sm">
             <Sparkles className="h-4 w-4 text-emerald-500 animate-bounce" />
-            <span className="font-semibold">Data Baru Terdeteksi Realtime:</span> Metrik dan grafik telah otomatis diperbarui tanpa reload halaman!
+            <span className="font-semibold">Sinkronisasi Realtime Supabase Aktif:</span> Data berhasil diperbarui otomatis secara instan tanpa reload!
           </div>
         )}
 
-        {/* Top Control Bar: Global Filters & Action Buttons */}
+        {/* Top Control Bar: Filters & Quick Actions */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Filter Bulan */}
             <div className="flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-400">
               <Clock className="h-3.5 w-3.5" />
               <span>Periode:</span>
@@ -384,11 +468,10 @@ export const DashboardPage: React.FC = () => {
               )}
             </div>
 
-            {/* Global Search */}
             <div className="relative">
               <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
-                placeholder="Cari murid, tutor, host, mapel..."
+                placeholder="Cari data, murid, tutor, host..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="h-8 pl-8 text-xs w-48 sm:w-64"
@@ -396,7 +479,6 @@ export const DashboardPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Action: Quick PDF & Add Employee */}
           <div className="flex items-center gap-2">
             <Button
               size="sm"
@@ -422,7 +504,6 @@ export const DashboardPage: React.FC = () => {
 
         {/* KPI Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Card 1: Total GMV TikTok */}
           <Card className="hover:shadow-md transition-shadow border-slate-200 dark:border-slate-800">
             <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
               <CardTitle className="text-xs font-semibold text-muted-foreground">
@@ -442,7 +523,6 @@ export const DashboardPage: React.FC = () => {
             </CardContent>
           </Card>
 
-          {/* Card 2: Total Sesi Bimbel */}
           <Card className="hover:shadow-md transition-shadow border-slate-200 dark:border-slate-800">
             <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
               <CardTitle className="text-xs font-semibold text-muted-foreground">
@@ -462,7 +542,6 @@ export const DashboardPage: React.FC = () => {
             </CardContent>
           </Card>
 
-          {/* Card 3: Total Durasi Live */}
           <Card className="hover:shadow-md transition-shadow border-slate-200 dark:border-slate-800">
             <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
               <CardTitle className="text-xs font-semibold text-muted-foreground">
@@ -482,7 +561,6 @@ export const DashboardPage: React.FC = () => {
             </CardContent>
           </Card>
 
-          {/* Card 4: Total Karyawan Aktif */}
           <Card className="hover:shadow-md transition-shadow border-slate-200 dark:border-slate-800">
             <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
               <CardTitle className="text-xs font-semibold text-muted-foreground">
@@ -497,13 +575,13 @@ export const DashboardPage: React.FC = () => {
                 {employeeList.length} Karyawan
               </div>
               <p className="text-[11px] text-muted-foreground mt-1">
-                Tutor Bimbel & Host TikTok Live
+                Owner, Tutor Bimbel & Host TikTok Live
               </p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Tab Switcher: Overview / Bimbel Table / TikTok Table / Manajemen Karyawan */}
+        {/* Tab Navigation (5 Tabs: Overview, Bimbel, TikTok, Karyawan, Murid) */}
         <div className="flex items-center space-x-2 border-b border-slate-200 dark:border-slate-800 overflow-x-auto pb-1">
           <button
             onClick={() => setActiveTab('overview')}
@@ -552,14 +630,25 @@ export const DashboardPage: React.FC = () => {
             <Users className="h-4 w-4" />
             <span>👥 Manajemen Karyawan ({employeeList.length})</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('murid')}
+            className={`pb-2.5 px-3 text-xs font-bold transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'murid'
+                ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <BookOpen className="h-4 w-4" />
+            <span>🎓 Siswa Binaan ({muridList.length})</span>
+          </button>
         </div>
 
         {/* TAB 1: OVERVIEW & CHARTS */}
         {activeTab === 'overview' && (
           <div className="space-y-6 animate-in fade-in">
-            {/* Row Charts 1 */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Chart 1: Tren GMV Harian */}
+              {/* Chart 1: Tren GMV */}
               <Card className="border-slate-200 dark:border-slate-800">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
@@ -613,7 +702,7 @@ export const DashboardPage: React.FC = () => {
                 </CardContent>
               </Card>
 
-              {/* Chart 2: Distribusi Mata Pelajaran Bimbel */}
+              {/* Chart 2: Komposisi Mapel */}
               <Card className="border-slate-200 dark:border-slate-800">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
@@ -652,7 +741,6 @@ export const DashboardPage: React.FC = () => {
                           ))}
                         </Pie>
                         <Tooltip formatter={(value: any) => [`${value} Sesi`, 'Jumlah']} />
-                        <Legend wrapperStyle={{ fontSize: '11px' }} />
                       </PieChart>
                     </ResponsiveContainer>
                   )}
@@ -660,89 +748,47 @@ export const DashboardPage: React.FC = () => {
               </Card>
             </div>
 
-            {/* Row Charts 2 */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Chart 3: GMV per Host */}
-              <Card className="border-slate-200 dark:border-slate-800">
-                <CardHeader className="pb-2">
+            {/* Chart 3: Performa Host TikTok */}
+            <Card className="border-slate-200 dark:border-slate-800">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-bold flex items-center gap-2">
                     <Video className="h-4 w-4 text-purple-600" />
                     Kontribusi GMV per Host TikTok
                   </CardTitle>
-                  <CardDescription className="text-xs">
-                    Perbandingan total penjualan yang dihasilkan tiap Host
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="h-64 pt-4">
-                  {hostChartData.length === 0 ? (
-                    <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
-                      Belum ada data host.
-                    </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={hostChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                        <XAxis dataKey="name" fontSize={11} />
-                        <YAxis
-                          fontSize={11}
-                          tickFormatter={(val) => `${(val / 1000000).toFixed(1)}M`}
-                        />
-                        <Tooltip formatter={(value: any) => [formatRupiah(Number(value)), 'Total GMV']} />
-                        <Bar dataKey="gmv" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Quick Actions Info Card */}
-              <Card className="border-slate-200 dark:border-slate-800 flex flex-col justify-between">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <UserPlus className="h-4 w-4 text-indigo-600" />
-                    Akses Langsung Manajemen Karyawan
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Daftarkan akun Tutor/Host baru atau ubah kata sandi karyawan dengan 1 klik
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3 text-xs">
-                  <div className="p-3 rounded-lg bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900 space-y-1.5">
-                    <div className="font-semibold text-indigo-800 dark:text-indigo-300 flex items-center gap-1.5">
-                      <ShieldCheck className="h-4 w-4" />
-                      Fitur Owner Terproteksi PostgreSQL:
-                    </div>
-                    <ul className="text-[11px] text-muted-foreground list-disc list-inside space-y-0.5">
-                      <li>Daftarkan email dan password akun Tutor / Host secara instan</li>
-                      <li>Reset password karyawan langsung tanpa perlu buka Supabase dashboard</li>
-                      <li>Role isolation: Karyawan hanya bisa mengakses dashboard mereka sendiri</li>
-                    </ul>
-                  </div>
-                </CardContent>
-                <div className="p-6 pt-0 flex gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() => setIsAddEmployeeOpen(true)}
-                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs gap-1.5 shadow-md shadow-indigo-500/20"
-                  >
-                    <UserPlus className="h-4 w-4" />
-                    + Tambah Karyawan
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setActiveTab('karyawan')}
-                    className="text-xs"
-                  >
-                    Kelola Karyawan ➔
-                  </Button>
+                  <Badge variant="outline" className="text-[10px]">
+                    Bar Ranking
+                  </Badge>
                 </div>
-              </Card>
-            </div>
+                <CardDescription className="text-xs">
+                  Perbandingan total penjualan yang dihasilkan tiap host
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="h-56 pt-4">
+                {hostChartData.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-xs text-muted-foreground">
+                    Belum ada data host pada filter ini.
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={hostChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                      <XAxis dataKey="name" fontSize={11} />
+                      <YAxis
+                        fontSize={11}
+                        tickFormatter={(val) => `${(val / 1000000).toFixed(1)}M`}
+                      />
+                      <Tooltip formatter={(value: any) => [formatRupiah(Number(value)), 'Total GMV']} />
+                      <Bar dataKey="gmv" fill="#8b5cf6" radius={[6, 6, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
           </div>
         )}
 
-        {/* TAB 2: DATA LAPORAN BIMBEL */}
+        {/* TAB 2: DATA LAPORAN BIMBEL (CRUD) */}
         {activeTab === 'bimbel' && (
           <div className="space-y-4 animate-in fade-in">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -771,17 +817,6 @@ export const DashboardPage: React.FC = () => {
                   <FileDown className="h-3.5 w-3.5 text-blue-600" />
                   <span>Ekspor CSV</span>
                 </Button>
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    setPreselectedMuridId(filterMurid !== 'all' ? filterMurid : undefined)
-                    setIsPdfModalOpen(true)
-                  }}
-                  className="bg-blue-600 hover:bg-blue-700 text-white text-xs gap-1.5"
-                >
-                  <FileText className="h-3.5 w-3.5" />
-                  <span>Generate PDF Siswa</span>
-                </Button>
               </div>
             </div>
 
@@ -792,12 +827,12 @@ export const DashboardPage: React.FC = () => {
                     <tr>
                       <th className="p-3 w-10 text-center">No</th>
                       <th className="p-3">Tanggal</th>
-                      <th className="p-3">Siswa & Kelas</th>
-                      <th className="p-3">Tutor</th>
+                      <th className="p-3">Nama Siswa</th>
+                      <th className="p-3">Tutor Pengajar</th>
                       <th className="p-3">Mata Pelajaran</th>
-                      <th className="p-3">Topik</th>
-                      <th className="p-3">Ringkasan Materi</th>
-                      <th className="p-3 text-right">Aksi PDF</th>
+                      <th className="p-3">Topik / Materi</th>
+                      <th className="p-3">Ringkasan Sesi</th>
+                      <th className="p-3 text-right">Aksi Kelola</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -812,39 +847,65 @@ export const DashboardPage: React.FC = () => {
                         <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
                           <td className="p-3 text-center text-muted-foreground">{idx + 1}</td>
                           <td className="p-3 font-medium whitespace-nowrap">{item.tanggal}</td>
-                          <td className="p-3">
-                            <div className="font-semibold text-slate-900 dark:text-slate-100">
-                              {item.murid?.nama || '-'}
-                            </div>
-                            <div className="text-[11px] text-muted-foreground">
-                              {item.murid?.tingkat_kelas || '-'}
-                            </div>
+                          <td className="p-3 font-semibold text-slate-900 dark:text-slate-100">
+                            {item.murid?.nama || '-'}
+                            <span className="block text-[10px] font-normal text-muted-foreground">
+                              {item.murid?.tingkat_kelas}
+                            </span>
                           </td>
                           <td className="p-3 text-slate-700 dark:text-slate-300">
                             {item.tutor?.nama || '-'}
                           </td>
                           <td className="p-3">
-                            <Badge variant="outline" className="text-[10px] bg-blue-50/50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border-blue-200">
+                            <Badge variant="outline" className="text-[10px]">
                               {item.mata_pelajaran}
                             </Badge>
                           </td>
                           <td className="p-3 font-medium text-slate-800 dark:text-slate-200">
                             {item.topik}
                           </td>
-                          <td className="p-3 text-slate-600 dark:text-slate-400 max-w-xs truncate">
+                          <td className="p-3 max-w-xs truncate text-muted-foreground" title={item.ringkasan}>
                             {item.ringkasan}
                           </td>
-                          <td className="p-3 text-right">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              title="Download PDF Laporan Siswa Ini"
-                              onClick={() => handleQuickStudentPdf(item)}
-                              className="h-7 px-2 text-xs text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950 gap-1"
-                            >
-                              <FileDown className="h-3.5 w-3.5" />
-                              <span className="hidden md:inline">PDF</span>
-                            </Button>
+                          <td className="p-3 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleQuickStudentPdf(item)}
+                                className="h-7 px-2 text-xs text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-900 dark:text-blue-400 gap-1"
+                                title="Unduh PDF Siswa Ini"
+                              >
+                                <FileDown className="h-3.5 w-3.5" />
+                                <span>PDF</span>
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setEditBimbelTarget(item)}
+                                className="h-7 w-7 p-0 text-slate-600 hover:text-blue-600 hover:bg-blue-50"
+                                title="Edit Sesi Bimbel"
+                              >
+                                <Edit className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  setDeleteTarget({
+                                    type: 'bimbel',
+                                    id: item.id,
+                                    name: `${item.mata_pelajaran} - ${item.murid?.nama || 'Siswa'} (${item.tanggal})`,
+                                    title: 'Hapus Laporan Bimbel',
+                                    desc: 'Apakah Anda yakin ingin menghapus catatan sesi mengajar ini secara permanen?',
+                                  })
+                                }
+                                className="h-7 w-7 p-0 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                                title="Hapus Laporan"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -856,7 +917,7 @@ export const DashboardPage: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 3: DATA LAPORAN TIKTOK LIVE */}
+        {/* TAB 3: DATA LAPORAN TIKTOK (CRUD) */}
         {activeTab === 'tiktok' && (
           <div className="space-y-4 animate-in fade-in">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -901,12 +962,13 @@ export const DashboardPage: React.FC = () => {
                       <th className="p-3">Tayangan (Views)</th>
                       <th className="p-3">Impresi</th>
                       <th className="p-3 text-center">Bukti GMV</th>
+                      <th className="p-3 text-right">Aksi Kelola</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {filteredTiktok.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="p-6 text-center text-muted-foreground">
+                        <td colSpan={9} className="p-6 text-center text-muted-foreground">
                           Tidak ditemukan data laporan TikTok pada kriteria ini.
                         </td>
                       </tr>
@@ -945,6 +1007,36 @@ export const DashboardPage: React.FC = () => {
                               <span className="text-[11px] text-muted-foreground">-</span>
                             )}
                           </td>
+                          <td className="p-3 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setEditTiktokTarget(item)}
+                                className="h-7 w-7 p-0 text-slate-600 hover:text-pink-600 hover:bg-pink-50"
+                                title="Edit Laporan TikTok"
+                              >
+                                <Edit className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  setDeleteTarget({
+                                    type: 'tiktok',
+                                    id: item.id,
+                                    name: `Live ${item.host?.nama || 'Host'} (${formatRupiah(Number(item.gmv_rupiah))}) - ${item.tanggal}`,
+                                    title: 'Hapus Laporan TikTok Live',
+                                    desc: 'Apakah Anda yakin ingin menghapus data laporan live streaming ini?',
+                                  })
+                                }
+                                className="h-7 w-7 p-0 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                                title="Hapus Laporan"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </td>
                         </tr>
                       ))
                     )}
@@ -955,7 +1047,7 @@ export const DashboardPage: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 4: MANAJEMEN KARYAWAN (TUTOR & HOST) */}
+        {/* TAB 4: MANAJEMEN KARYAWAN (FULL CRUD) */}
         {activeTab === 'karyawan' && (
           <div className="space-y-4 animate-in fade-in">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -965,7 +1057,7 @@ export const DashboardPage: React.FC = () => {
                   Daftar Karyawan Terdaftar ({filteredEmployees.length})
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Kelola hak akses Tutor Bimbel dan Host TikTok Live
+                  Kelola hak akses, perbarui data, reset sandi, atau hapus akun karyawan
                 </p>
               </div>
 
@@ -988,7 +1080,7 @@ export const DashboardPage: React.FC = () => {
                       <th className="p-3">Nama Karyawan</th>
                       <th className="p-3">Peran / Role</th>
                       <th className="p-3">Status Akses</th>
-                      <th className="p-3 text-right">Aksi Kata Sandi</th>
+                      <th className="p-3 text-right">Aksi Kelola Akun</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1004,6 +1096,11 @@ export const DashboardPage: React.FC = () => {
                           <td className="p-3 text-center text-muted-foreground">{idx + 1}</td>
                           <td className="p-3 font-semibold text-slate-900 dark:text-slate-100">
                             {emp.nama}
+                            {emp.id === user?.id && (
+                              <Badge variant="outline" className="ml-2 text-[10px] border-emerald-300 text-emerald-600">
+                                Akun Anda
+                              </Badge>
+                            )}
                           </td>
                           <td className="p-3">
                             <Badge
@@ -1019,7 +1116,7 @@ export const DashboardPage: React.FC = () => {
                                   ? 'text-blue-700 bg-blue-50 border-blue-200 dark:bg-blue-950 dark:text-blue-300'
                                   : emp.role === 'host'
                                   ? 'text-pink-700 bg-pink-50 border-pink-200 dark:bg-pink-950 dark:text-pink-300'
-                                  : ''
+                                  : 'bg-indigo-600 text-white'
                               }`}
                             >
                               {emp.role === 'tutor' ? 'Tutor Bimbel' : emp.role === 'host' ? 'Host TikTok Live' : 'Owner'}
@@ -1030,16 +1127,53 @@ export const DashboardPage: React.FC = () => {
                               <UserCheck className="h-3.5 w-3.5" /> Aktif
                             </span>
                           </td>
-                          <td className="p-3 text-right">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setResetEmployeeTarget(emp)}
-                              className="h-7 px-2.5 text-xs text-amber-700 border-amber-200 hover:bg-amber-50 dark:border-amber-900 dark:text-amber-400 dark:hover:bg-amber-950 gap-1.5"
-                            >
-                              <KeyRound className="h-3.5 w-3.5" />
-                              <span>Ganti Kata Sandi</span>
-                            </Button>
+                          <td className="p-3 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {/* Edit Data */}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setEditEmployeeTarget(emp)}
+                                className="h-7 px-2.5 text-xs text-indigo-700 border-indigo-200 hover:bg-indigo-50 dark:border-indigo-900 dark:text-indigo-400 gap-1"
+                                title="Edit Nama / Role Karyawan"
+                              >
+                                <Edit className="h-3.5 w-3.5" />
+                                <span>Edit</span>
+                              </Button>
+
+                              {/* Reset Sandi */}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setResetEmployeeTarget(emp)}
+                                className="h-7 px-2.5 text-xs text-amber-700 border-amber-200 hover:bg-amber-50 dark:border-amber-900 dark:text-amber-400 gap-1"
+                                title="Ganti Kata Sandi"
+                              >
+                                <KeyRound className="h-3.5 w-3.5" />
+                                <span>Sandi</span>
+                              </Button>
+
+                              {/* Hapus Karyawan */}
+                              {emp.id !== user?.id && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    setDeleteTarget({
+                                      type: 'employee',
+                                      id: emp.id,
+                                      name: `${emp.nama} (${emp.role.toUpperCase()})`,
+                                      title: 'Hapus Karyawan',
+                                      desc: 'Apakah Anda yakin ingin menghapus akun karyawan ini secara permanen beserta seluruh riwayat aktivitasnya?',
+                                    })
+                                  }
+                                  className="h-7 w-7 p-0 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                                  title="Hapus Karyawan"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -1050,7 +1184,123 @@ export const DashboardPage: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* TAB 5: MANAJEMEN SISWA BINAAN (FULL CRUD) */}
+        {activeTab === 'murid' && (
+          <div className="space-y-4 animate-in fade-in">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                  <BookOpen className="h-4 w-4 text-emerald-600" />
+                  Daftar Siswa Bimbingan Belajar ({filteredMurid.length})
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Kelola data siswa, jenjang kelas, dan cetak rapor perkembangan belajar
+                </p>
+              </div>
+
+              <Button
+                size="sm"
+                onClick={() => setIsAddMuridOpen(true)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 text-xs shadow-md shadow-emerald-500/20"
+              >
+                <Plus className="h-4 w-4" />
+                <span>+ Tambah Siswa Baru</span>
+              </Button>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/60 border-b text-slate-700 dark:text-slate-300 font-semibold">
+                    <tr>
+                      <th className="p-3 w-10 text-center">No</th>
+                      <th className="p-3">Nama Lengkap Siswa</th>
+                      <th className="p-3">Tingkat / Jenjang Kelas</th>
+                      <th className="p-3">Total Sesi Diikuti</th>
+                      <th className="p-3 text-right">Aksi Kelola</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {filteredMurid.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="p-6 text-center text-muted-foreground">
+                          Belum ada siswa binaan yang terdaftar.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredMurid.map((m, idx) => {
+                        const totalSesi = bimbelList.filter((b) => b.murid_id === m.id).length
+                        return (
+                          <tr key={m.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                            <td className="p-3 text-center text-muted-foreground">{idx + 1}</td>
+                            <td className="p-3 font-semibold text-slate-900 dark:text-slate-100">
+                              {m.nama}
+                            </td>
+                            <td className="p-3">
+                              <Badge variant="outline" className="text-[10px] bg-slate-50 border-slate-200">
+                                {m.tingkat_kelas}
+                              </Badge>
+                            </td>
+                            <td className="p-3">
+                              <span className="font-semibold text-blue-600">{totalSesi}</span> Sesi
+                            </td>
+                            <td className="p-3 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setPreselectedMuridId(m.id)
+                                    setIsPdfModalOpen(true)
+                                  }}
+                                  className="h-7 px-2.5 text-xs text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-900 dark:text-blue-400 gap-1"
+                                  title="Cetak Laporan PDF Siswa Ini"
+                                >
+                                  <FileDown className="h-3.5 w-3.5" />
+                                  <span>Rapor PDF</span>
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setEditMuridTarget(m)}
+                                  className="h-7 w-7 p-0 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50"
+                                  title="Edit Siswa"
+                                >
+                                  <Edit className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    setDeleteTarget({
+                                      type: 'murid',
+                                      id: m.id,
+                                      name: `${m.nama} (${m.tingkat_kelas})`,
+                                      title: 'Hapus Siswa Binaan',
+                                      desc: 'Apakah Anda yakin ingin menghapus data siswa ini? Catatan riwayat bimbel terkait siswa ini mungkin akan ikut terhapus.',
+                                    })
+                                  }
+                                  className="h-7 w-7 p-0 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                                  title="Hapus Siswa"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
+
+      {/* --- ALL MODALS --- */}
 
       {/* Add Employee Modal */}
       <AddEmployeeModal
@@ -1059,11 +1309,62 @@ export const DashboardPage: React.FC = () => {
         onSuccess={() => fetchData()}
       />
 
+      {/* Edit Employee Modal */}
+      <EditEmployeeModal
+        isOpen={!!editEmployeeTarget}
+        onClose={() => setEditEmployeeTarget(null)}
+        onSuccess={() => fetchData()}
+        employee={editEmployeeTarget}
+      />
+
       {/* Reset Password Modal */}
       <ResetPasswordModal
         isOpen={!!resetEmployeeTarget}
         onClose={() => setResetEmployeeTarget(null)}
         employee={resetEmployeeTarget}
+      />
+
+      {/* Edit Bimbel Modal */}
+      <EditBimbelModal
+        isOpen={!!editBimbelTarget}
+        onClose={() => setEditBimbelTarget(null)}
+        onSuccess={() => fetchData()}
+        laporan={editBimbelTarget}
+        muridList={muridList}
+      />
+
+      {/* Edit TikTok Modal */}
+      <EditTikTokModal
+        isOpen={!!editTiktokTarget}
+        onClose={() => setEditTiktokTarget(null)}
+        onSuccess={() => fetchData()}
+        laporan={editTiktokTarget}
+      />
+
+      {/* Add Murid Modal */}
+      <AddMuridModal
+        isOpen={isAddMuridOpen}
+        onClose={() => setIsAddMuridOpen(false)}
+        onSuccess={() => fetchData()}
+      />
+
+      {/* Edit Murid Modal */}
+      <EditMuridModal
+        isOpen={!!editMuridTarget}
+        onClose={() => setEditMuridTarget(null)}
+        onSuccess={() => fetchData()}
+        murid={editMuridTarget}
+      />
+
+      {/* Delete Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+        title={deleteTarget?.title || 'Konfirmasi Hapus'}
+        description={deleteTarget?.desc || 'Apakah Anda yakin ingin menghapus data ini secara permanen?'}
+        itemName={deleteTarget?.name}
+        isDeleting={isDeleting}
       />
 
       {/* PDF Export Modal */}
