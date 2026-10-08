@@ -1,18 +1,20 @@
 -- ==============================================================================
--- HRIS PADI TECH - MASTER DATABASE SETUP & FULL SYNC (BYPASS RATE LIMIT & AUTO-HEAL)
+-- HRIS PADI TECH - MASTER DATABASE SETUP & FULL EMAIL SYNC
 -- ==============================================================================
--- Skrip ini menyelesaikan semua masalah:
--- 1. Sinkronisasi otomatis auth.users -> public.users_profile (Semua karyawan langsung muncul)
--- 2. Self-healing owner_create_employee: Jika email sudah ada di auth, otomatis diperbarui & disinkronkan
--- 3. owner_delete_employee: Menghapus total dari auth.users dan users_profile
--- 4. Full RLS CRUD untuk Owner pada 4 tabel (users_profile, murid, laporan_bimbel, laporan_tiktok)
--- 5. Realtime WebSocket di 4 tabel
--- 6. Anti-Pause pg_cron (Jam 12 Malam / 00:00 UTC) untuk menjaga Supabase aktif 24/7 tanpa boros kuota
+-- Skrip ini:
+-- 1. Menambahkan kolom 'email' di tabel public.users_profile
+-- 2. Mengisi dan menyinkronkan seluruh email dari auth.users ke public.users_profile
+-- 3. Memperbarui fungsi pendaftaran & trigger agar selalu menyimpan email secara otomatis
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ------------------------------------------------------------------------------
--- 1. HELPER IS_OWNER (Security Definer)
+-- 1. TAMBAH KOLOM EMAIL DI USERS_PROFILE
+-- ------------------------------------------------------------------------------
+ALTER TABLE public.users_profile ADD COLUMN IF NOT EXISTS email TEXT;
+
+-- ------------------------------------------------------------------------------
+-- 2. HELPER IS_OWNER (Security Definer)
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.is_owner()
 RETURNS BOOLEAN
@@ -28,7 +30,7 @@ AS $$
 $$;
 
 -- ------------------------------------------------------------------------------
--- 2. TRIGGER AUTO-SYNC AUTH.USERS -> USERS_PROFILE
+-- 3. TRIGGER AUTO-SYNC AUTH.USERS -> USERS_PROFILE (DENGAN EMAIL)
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
@@ -39,6 +41,7 @@ AS $$
 DECLARE
     default_role user_role;
     user_name TEXT;
+    user_email TEXT;
 BEGIN
     BEGIN
         default_role := (NEW.raw_user_meta_data->>'role')::user_role;
@@ -53,10 +56,13 @@ BEGIN
         split_part(NEW.email, '@', 1)
     );
 
-    INSERT INTO public.users_profile (id, nama, role)
-    VALUES (NEW.id, user_name, default_role)
+    user_email := lower(trim(NEW.email));
+
+    INSERT INTO public.users_profile (id, nama, email, role)
+    VALUES (NEW.id, user_name, user_email, default_role)
     ON CONFLICT (id) DO UPDATE
     SET nama = EXCLUDED.nama,
+        email = EXCLUDED.email,
         role = EXCLUDED.role,
         updated_at = now();
 
@@ -71,7 +77,7 @@ CREATE TRIGGER on_auth_user_created
     EXECUTE FUNCTION public.handle_new_user();
 
 -- ------------------------------------------------------------------------------
--- 3. FUNGSI SELF-HEALING: OWNER DAFTAR KARYAWAN (Bypass Rate Limit & Auto-Sync)
+-- 4. FUNGSI OWNER DAFTAR KARYAWAN (DENGAN EMAIL DISIMPAN LENGKAP)
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.owner_create_employee(
     p_email TEXT,
@@ -111,11 +117,10 @@ BEGIN
         RAISE EXCEPTION 'Password minimal 6 karakter!';
     END IF;
 
-    -- Cek jika akun sudah ada di auth.users sebelumnya
+    -- Cek jika akun sudah ada di auth.users sebelumnya (Self-healing)
     SELECT id INTO existing_user_id FROM auth.users WHERE email = clean_email;
 
     IF existing_user_id IS NOT NULL THEN
-        -- Self-healing: Update kata sandi & metadata agar sinkron sempurna
         UPDATE auth.users
         SET encrypted_password = crypt(p_password, gen_salt('bf')),
             raw_user_meta_data = jsonb_build_object('nama', p_nama, 'role', target_role::text),
@@ -123,11 +128,11 @@ BEGIN
             updated_at = now()
         WHERE id = existing_user_id;
 
-        -- Pastikan masuk ke public.users_profile
-        INSERT INTO public.users_profile (id, nama, role)
-        VALUES (existing_user_id, p_nama, target_role)
+        INSERT INTO public.users_profile (id, nama, email, role)
+        VALUES (existing_user_id, p_nama, clean_email, target_role)
         ON CONFLICT (id) DO UPDATE
         SET nama = EXCLUDED.nama,
+            email = EXCLUDED.email,
             role = EXCLUDED.role,
             updated_at = now();
 
@@ -141,7 +146,6 @@ BEGIN
         );
     END IF;
 
-    -- Jika akun baru
     new_user_id := gen_random_uuid();
 
     INSERT INTO auth.users (
@@ -177,10 +181,11 @@ BEGIN
         new_user_id::text
     );
 
-    INSERT INTO public.users_profile (id, nama, role)
-    VALUES (new_user_id, p_nama, target_role)
+    INSERT INTO public.users_profile (id, nama, email, role)
+    VALUES (new_user_id, p_nama, clean_email, target_role)
     ON CONFLICT (id) DO UPDATE
     SET nama = EXCLUDED.nama,
+        email = EXCLUDED.email,
         role = EXCLUDED.role,
         updated_at = now();
 
@@ -196,7 +201,60 @@ END;
 $$;
 
 -- ------------------------------------------------------------------------------
--- 4. FUNGSI GANTI SANDI KARYAWAN OLEH OWNER
+-- 5. FUNGSI SINKRONISASI SEMUA USER & EMAIL DARI AUTH KE USERS_PROFILE
+-- ------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.sync_all_auth_users()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+    r RECORD;
+    v_role user_role;
+    v_nama TEXT;
+    v_email TEXT;
+    sync_count INT := 0;
+BEGIN
+    FOR r IN SELECT * FROM auth.users LOOP
+        BEGIN
+            v_role := (r.raw_user_meta_data->>'role')::user_role;
+        EXCEPTION
+            WHEN OTHERS THEN
+                v_role := 'tutor'::user_role;
+        END;
+
+        v_nama := COALESCE(
+            r.raw_user_meta_data->>'nama',
+            r.raw_user_meta_data->>'name',
+            split_part(r.email, '@', 1)
+        );
+
+        v_email := lower(trim(r.email));
+
+        INSERT INTO public.users_profile (id, nama, email, role)
+        VALUES (r.id, v_nama, v_email, v_role)
+        ON CONFLICT (id) DO UPDATE
+        SET nama = EXCLUDED.nama,
+            email = EXCLUDED.email,
+            role = EXCLUDED.role,
+            updated_at = now();
+
+        sync_count := sync_count + 1;
+    END LOOP;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'synced_count', sync_count
+    );
+END;
+$$;
+
+-- Jalankan sinkronisasi sekarang agar semua email langsung terisi
+SELECT public.sync_all_auth_users();
+
+-- ------------------------------------------------------------------------------
+-- 6. FUNGSI RESET SANDI & HAPUS KARYAWAN
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.owner_reset_employee_password(
     p_user_id UUID,
@@ -232,9 +290,6 @@ BEGIN
 END;
 $$;
 
--- ------------------------------------------------------------------------------
--- 5. FUNGSI HAPUS KARYAWAN TOTAL (CASCADE SAFE)
--- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.owner_delete_employee(
     p_user_id UUID
 )
@@ -266,56 +321,7 @@ END;
 $$;
 
 -- ------------------------------------------------------------------------------
--- 6. FUNGSI SINKRONISASI SEMUA USER LAMA AUTH.USERS KE USERS_PROFILE
--- ------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.sync_all_auth_users()
-RETURNS JSONB
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, auth, extensions
-AS $$
-DECLARE
-    r RECORD;
-    v_role user_role;
-    v_nama TEXT;
-    sync_count INT := 0;
-BEGIN
-    FOR r IN SELECT * FROM auth.users LOOP
-        BEGIN
-            v_role := (r.raw_user_meta_data->>'role')::user_role;
-        EXCEPTION
-            WHEN OTHERS THEN
-                v_role := 'tutor'::user_role;
-        END;
-
-        v_nama := COALESCE(
-            r.raw_user_meta_data->>'nama',
-            r.raw_user_meta_data->>'name',
-            split_part(r.email, '@', 1)
-        );
-
-        INSERT INTO public.users_profile (id, nama, role)
-        VALUES (r.id, v_nama, v_role)
-        ON CONFLICT (id) DO UPDATE
-        SET nama = EXCLUDED.nama,
-            role = EXCLUDED.role,
-            updated_at = now();
-
-        sync_count := sync_count + 1;
-    END LOOP;
-
-    RETURN jsonb_build_object(
-        'success', true,
-        'synced_count', sync_count
-    );
-END;
-$$;
-
--- Jalankan sinkronisasi user sekarang
-SELECT public.sync_all_auth_users();
-
--- ------------------------------------------------------------------------------
--- 7. RLS POLICIES (FULL CRUD OWNER & ACCESS CONTROL)
+-- 7. RLS POLICIES & REALTIME
 -- ------------------------------------------------------------------------------
 ALTER TABLE public.users_profile ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Owner can manage all profiles" ON public.users_profile;
@@ -325,111 +331,8 @@ TO authenticated
 USING (public.is_owner() OR id = auth.uid())
 WITH CHECK (public.is_owner() OR id = auth.uid());
 
-ALTER TABLE public.murid ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Authenticated users can read murid" ON public.murid;
-CREATE POLICY "Authenticated users can read murid"
-ON public.murid FOR SELECT
-TO authenticated
-USING (true);
-
-DROP POLICY IF EXISTS "Owner can manage murid" ON public.murid;
-CREATE POLICY "Owner can manage murid"
-ON public.murid FOR ALL
-TO authenticated
-USING (public.is_owner())
-WITH CHECK (public.is_owner());
-
-ALTER TABLE public.laporan_bimbel ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Tutor view own or owner view all bimbel" ON public.laporan_bimbel;
-CREATE POLICY "Tutor view own or owner view all bimbel"
-ON public.laporan_bimbel FOR SELECT
-TO authenticated
-USING (tutor_id = auth.uid() OR public.is_owner());
-
-DROP POLICY IF EXISTS "Tutor insert own bimbel report" ON public.laporan_bimbel;
-CREATE POLICY "Tutor insert own bimbel report"
-ON public.laporan_bimbel FOR INSERT
-TO authenticated
-WITH CHECK (tutor_id = auth.uid() OR public.is_owner());
-
-DROP POLICY IF EXISTS "Owner can manage all bimbel" ON public.laporan_bimbel;
-CREATE POLICY "Owner can manage all bimbel"
-ON public.laporan_bimbel FOR ALL
-TO authenticated
-USING (public.is_owner())
-WITH CHECK (public.is_owner());
-
-ALTER TABLE public.laporan_tiktok ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Host view own or owner view all tiktok" ON public.laporan_tiktok;
-CREATE POLICY "Host view own or owner view all tiktok"
-ON public.laporan_tiktok FOR SELECT
-TO authenticated
-USING (host_id = auth.uid() OR public.is_owner());
-
-DROP POLICY IF EXISTS "Host insert own tiktok report" ON public.laporan_tiktok;
-CREATE POLICY "Host insert own tiktok report"
-ON public.laporan_tiktok FOR INSERT
-TO authenticated
-WITH CHECK (host_id = auth.uid() OR public.is_owner());
-
-DROP POLICY IF EXISTS "Owner can manage all tiktok" ON public.laporan_tiktok;
-CREATE POLICY "Owner can manage all tiktok"
-ON public.laporan_tiktok FOR ALL
-TO authenticated
-USING (public.is_owner())
-WITH CHECK (public.is_owner());
-
--- ------------------------------------------------------------------------------
--- 8. REALTIME REPLICATION DI 4 TABEL
--- ------------------------------------------------------------------------------
 DO $$ BEGIN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.users_profile;
-EXCEPTION WHEN OTHERS THEN null; END $$;
-
-DO $$ BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.murid;
-EXCEPTION WHEN OTHERS THEN null; END $$;
-
-DO $$ BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.laporan_bimbel;
-EXCEPTION WHEN OTHERS THEN null; END $$;
-
-DO $$ BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.laporan_tiktok;
-EXCEPTION WHEN OTHERS THEN null; END $$;
-
--- ------------------------------------------------------------------------------
--- 9. ANTI-PAUSE DATABASE HEARTBEAT (JAM 12 MALAM WIB = 17:00 UTC)
--- ------------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.system_heartbeat (
-    id BIGSERIAL PRIMARY KEY,
-    pinged_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
-    status TEXT NOT NULL DEFAULT 'active'
-);
-
-ALTER TABLE public.system_heartbeat ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Owner view heartbeat" ON public.system_heartbeat;
-CREATE POLICY "Owner view heartbeat" ON public.system_heartbeat FOR SELECT TO authenticated USING (public.is_owner());
-
-CREATE OR REPLACE FUNCTION public.perform_system_heartbeat()
-RETURNS VOID
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-BEGIN
-    INSERT INTO public.system_heartbeat (status) VALUES ('midnight_pulse');
-    DELETE FROM public.system_heartbeat WHERE pinged_at < (now() - INTERVAL '7 days');
-END;
-$$;
-
-DO $$ BEGIN
-    CREATE EXTENSION IF NOT EXISTS pg_cron;
-    PERFORM cron.schedule(
-        'keep_supabase_alive_midnight',
-        '0 17 * * *', -- Jam 17:00 UTC = Jam 00:00 (12 Malam) WIB
-        'SELECT public.perform_system_heartbeat();'
-    );
 EXCEPTION WHEN OTHERS THEN null; END $$;
 
 -- Berikan izin akses eksekusi

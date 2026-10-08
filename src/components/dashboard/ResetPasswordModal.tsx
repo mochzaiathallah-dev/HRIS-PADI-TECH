@@ -13,6 +13,7 @@ import {
   KeyRound, 
   X, 
   User, 
+  Mail,
   Lock, 
   Loader2, 
   CheckCircle2, 
@@ -125,11 +126,11 @@ export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({
               </div>
             )}
 
-            {/* Info Karyawan */}
-            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-1">
+            {/* Info Karyawan & Email */}
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <User className="h-3 w-3" /> Nama Karyawan:
+                  <User className="h-3.5 w-3.5 text-slate-500" /> Nama Karyawan:
                 </span>
                 <Badge variant="outline" className="capitalize text-[10px]">
                   {employee.role}
@@ -138,6 +139,11 @@ export const ResetPasswordModal: React.FC<ResetPasswordModalProps> = ({
               <div className="font-bold text-sm text-slate-900 dark:text-slate-100">
                 {employee.nama}
               </div>
+              {employee.email && (
+                <div className="text-xs text-muted-foreground font-mono flex items-center gap-1 pt-1 border-t border-slate-200 dark:border-slate-700">
+                  <Mail className="h-3 w-3 text-amber-500" /> {employee.email}
+                </div>
+              )}
             </div>
 
             {/* Password Baru */}

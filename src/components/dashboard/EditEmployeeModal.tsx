@@ -12,6 +12,7 @@ import {
   UserCog, 
   X, 
   User, 
+  Mail,
   GraduationCap, 
   Video, 
   ShieldCheck, 
@@ -145,6 +146,16 @@ export const EditEmployeeModal: React.FC<EditEmployeeModalProps> = ({
                 <span className="font-medium leading-relaxed">{errorMessage}</span>
               </div>
             )}
+
+            {/* Email Login (Informasi / Readonly) */}
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-1">
+              <span className="text-[11px] text-muted-foreground flex items-center gap-1.5 font-medium">
+                <Mail className="h-3.5 w-3.5 text-indigo-600" /> Email Login (Akun):
+              </span>
+              <div className="font-mono text-xs font-semibold text-slate-800 dark:text-slate-200 select-all">
+                {employee.email || '-'}
+              </div>
+            </div>
 
             {/* Nama Lengkap */}
             <div className="space-y-1.5">

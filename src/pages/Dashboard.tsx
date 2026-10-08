@@ -52,7 +52,8 @@ import {
   Edit,
   Trash2,
   BookOpen,
-  Plus
+  Plus,
+  Mail
 } from 'lucide-react'
 
 const CHART_COLORS = ['#3b82f6', '#ec4899', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4']
@@ -284,6 +285,7 @@ export const DashboardPage: React.FC = () => {
       if (!searchQuery) return true
       return (
         emp.nama?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        emp.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         emp.role?.toLowerCase().includes(searchQuery.toLowerCase())
       )
     })
@@ -1102,6 +1104,7 @@ export const DashboardPage: React.FC = () => {
                     <tr>
                       <th className="p-3 w-10 text-center">No</th>
                       <th className="p-3">Nama Karyawan</th>
+                      <th className="p-3">Email Login (Akun)</th>
                       <th className="p-3">Peran / Role</th>
                       <th className="p-3">Status Akses</th>
                       <th className="p-3 text-right">Aksi Kelola Akun</th>
@@ -1110,7 +1113,7 @@ export const DashboardPage: React.FC = () => {
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {filteredEmployees.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="p-6 text-center text-muted-foreground">
+                        <td colSpan={6} className="p-6 text-center text-muted-foreground">
                           Belum ada karyawan yang terdaftar.
                         </td>
                       </tr>
@@ -1124,6 +1127,16 @@ export const DashboardPage: React.FC = () => {
                               <Badge variant="outline" className="ml-2 text-[10px] border-emerald-300 text-emerald-600">
                                 Akun Anda
                               </Badge>
+                            )}
+                          </td>
+                          <td className="p-3">
+                            {emp.email ? (
+                              <span className="font-mono text-xs text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                                <Mail className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                                {emp.email}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground text-[11px] italic">-</span>
                             )}
                           </td>
                           <td className="p-3">

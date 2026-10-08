@@ -3,6 +3,7 @@ export type UserRole = 'owner' | 'tutor' | 'host'
 export interface UserProfile {
   id: string
   nama: string
+  email?: string
   role: UserRole
   created_at?: string
   updated_at?: string
