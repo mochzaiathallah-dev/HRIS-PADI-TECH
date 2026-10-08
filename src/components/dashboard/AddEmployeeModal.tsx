@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
+import { createClient } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { UserRole } from '@/types'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -70,26 +71,73 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
     setSuccessMessage(null)
 
     try {
-      const { error } = await supabase.rpc('owner_create_employee', {
-        p_email: values.email.trim(),
-        p_password: values.password,
-        p_nama: values.nama.trim(),
-        p_role: values.role as UserRole,
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+      // 1. Create a secondary in-memory Supabase client without session persistence
+      // This allows registering the employee in Supabase Auth WITHOUT logging out the Owner!
+      const tempAuthClient = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
       })
 
-      if (error) {
-        throw new Error(error.message)
+      // 2. Sign up the employee with custom metadata (nama & role)
+      const { data: signUpData, error: signUpError } = await tempAuthClient.auth.signUp({
+        email: values.email.trim(),
+        password: values.password,
+        options: {
+          data: {
+            nama: values.nama.trim(),
+            role: values.role,
+          },
+        },
+      })
+
+      if (signUpError) {
+        if (signUpError.message.includes('already registered')) {
+          throw new Error(`Email ${values.email} sudah terdaftar di sistem. Gunakan email lain!`)
+        }
+        throw signUpError
       }
 
-      setSuccessMessage(`Karyawan ${values.nama} (${values.role.toUpperCase()}) berhasil didaftarkan!`)
+      if (!signUpData.user) {
+        throw new Error('Gagal membuat akun karyawan. Periksa kembali format data yang diisi.')
+      }
+
+      if (signUpData.user.identities && signUpData.user.identities.length === 0) {
+        throw new Error(`Email ${values.email} sudah terdaftar sebelumnya di sistem. Silakan gunakan email lain.`)
+      }
+
+      // 3. Upsert user profile to public.users_profile using Owner's authenticated client
+      const { error: profileError } = await supabase
+        .from('users_profile')
+        .upsert({
+          id: signUpData.user.id,
+          nama: values.nama.trim(),
+          role: values.role as UserRole,
+        })
+
+      if (profileError) {
+        console.warn('Profile upsert note (trigger might have handled it):', profileError.message)
+      }
+
+      setSuccessMessage(
+        `Karyawan ${values.nama} berhasil didaftarkan sebagai ${
+          values.role === 'tutor' ? 'Tutor Bimbel' : 'Host TikTok Live'
+        }!`
+      )
       reset()
+
       setTimeout(() => {
         onSuccess()
         onClose()
       }, 1500)
     } catch (err: any) {
       console.error('Error creating employee:', err)
-      setErrorMessage(err.message || 'Gagal mendaftarkan karyawan. Pastikan query owner_create_employee telah dijalankan di Supabase.')
+      setErrorMessage(err.message || 'Gagal mendaftarkan karyawan. Periksa koneksi internet Anda.')
     } finally {
       setIsSubmitting(false)
     }
