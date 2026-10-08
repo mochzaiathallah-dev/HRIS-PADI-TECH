@@ -407,7 +407,7 @@ BEGIN
             last_sign_in_at, created_at, updated_at, provider_id
         )
         VALUES (
-            existing_user_id::text,
+            existing_user_id,
             existing_user_id,
             jsonb_build_object('sub', existing_user_id::text, 'email', clean_email, 'email_verified', true, 'phone_verified', false),
             'email',
@@ -444,7 +444,7 @@ BEGIN
     )
     VALUES (
         new_user_id,
-        '00000000-0000-0000-0000-000000000000',
+        '00000000-0000-0000-0000-000000000000'::uuid,
         'authenticated',
         'authenticated',
         clean_email,
@@ -464,7 +464,7 @@ BEGIN
         last_sign_in_at, created_at, updated_at, provider_id
     )
     VALUES (
-        new_user_id::text,
+        new_user_id,
         new_user_id,
         jsonb_build_object('sub', new_user_id::text, 'email', clean_email, 'email_verified', true, 'phone_verified', false),
         'email',
@@ -600,7 +600,7 @@ BEGIN
             last_sign_in_at, created_at, updated_at, provider_id
         )
         VALUES (
-            r.id::text,
+            r.id,
             r.id,
             jsonb_build_object('sub', r.id::text, 'email', v_email, 'email_verified', true, 'phone_verified', false),
             'email',

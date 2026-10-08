@@ -209,7 +209,7 @@ BEGIN
             last_sign_in_at, created_at, updated_at, provider_id
         )
         VALUES (
-            existing_user_id::text,
+            existing_user_id,
             existing_user_id,
             jsonb_build_object('sub', existing_user_id::text, 'email', clean_email, 'email_verified', true, 'phone_verified', false),
             'email',
@@ -246,7 +246,7 @@ BEGIN
     )
     VALUES (
         new_user_id,
-        '00000000-0000-0000-0000-000000000000',
+        '00000000-0000-0000-0000-000000000000'::uuid,
         'authenticated',
         'authenticated',
         clean_email,
@@ -266,7 +266,7 @@ BEGIN
         last_sign_in_at, created_at, updated_at, provider_id
     )
     VALUES (
-        new_user_id::text,
+        new_user_id,
         new_user_id,
         jsonb_build_object('sub', new_user_id::text, 'email', clean_email, 'email_verified', true, 'phone_verified', false),
         'email',
@@ -335,14 +335,14 @@ BEGIN
             raw_app_meta_data = '{"provider":"email","providers":["email"]}'::jsonb
         WHERE id = r.id;
 
-        -- Pastikan identities terhubung
+        -- Pastikan identities terhubung dengan UUID id
         DELETE FROM auth.identities WHERE user_id = r.id;
         INSERT INTO auth.identities (
             id, user_id, identity_data, provider,
             last_sign_in_at, created_at, updated_at, provider_id
         )
         VALUES (
-            r.id::text,
+            r.id,
             r.id,
             jsonb_build_object('sub', r.id::text, 'email', v_email, 'email_verified', true, 'phone_verified', false),
             'email',
@@ -456,6 +456,13 @@ GRANT EXECUTE ON FUNCTION public.owner_create_employee(TEXT, TEXT, TEXT, TEXT) T
 GRANT EXECUTE ON FUNCTION public.owner_reset_employee_password(UUID, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.owner_delete_employee(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.sync_all_auth_users() TO authenticated;
+
+-- Reset kata sandi akun demo/default menjadi password123
+UPDATE auth.users
+SET encrypted_password = crypt('password123', gen_salt('bf')),
+    email_confirmed_at = now(),
+    updated_at = now()
+WHERE email IN ('owner@paditech.com', 'nikita@paditech.com', 'savira@paditech.com');
 
 -- Jalankan perbaikan sinkronisasi sekarang
 SELECT public.sync_all_auth_users();
