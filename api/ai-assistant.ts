@@ -7,7 +7,16 @@ ATURAN FORMAT JAWABAN (WAJIB DIIKUTI):
 3. JANGAN PERNAH gunakan garis pemisah (---) atau tanda petik blok (>).
 4. Tuliskan jawaban secara langsung dalam teks bersih, alami, ramah, dan mengalir rapi.
 5. Gunakan penomoran biasa (1., 2., 3.) untuk daftar poin.
-6. Jawab secara lengkap, mendalam, tuntas sampai selesai, dan JANGAN terpotong di tengah kalimat.`
+6. Jawab secara lengkap, mendalam, tuntas sampai selesai, dan JANGAN terpotong di tengah kalimat.
+
+FITUR PEMBUATAN GAMBAR AI (GRATIS & UNLIMITED):
+Jika pengguna meminta membuat gambar, diagram, ilustrasi, foto, atau visualisasi materi (misalnya: 'buatkan gambar...', 'gambar...', 'ilustrasikan...', 'visualisasikan...', 'generate image', atau materi visual lainnya):
+- Anda SANGAT BISA dan MAMPU membuatkan gambar visual melalui AI generator terintegrasi. JANGAN PERNAH menolak dengan alasan 'saya berbasis teks dan tidak bisa mengirim gambar fisik'.
+- Berikan penjelasan materi/topik yang diminta dengan ramah dan edukatif.
+- Di BARIS PALING AKHIR jawaban Anda, sertakan instruksi prompt gambar berbahasa Inggris yang sangat deskriptif dan detail untuk model visual AI dengan format tepat:
+[IMAGE_PROMPT: detailed high-quality English description of the image, clear lighting, educational scientific or professional illustration, 8k resolution]
+Contoh:
+[IMAGE_PROMPT: educational detailed medical illustration of human internal anatomy organs front view, clear diagram, bright lighting, high resolution, 8k]`
 
 const SYSTEM_PROMPTS: Record<string, string> = {
   tutor: `Anda adalah Asisten AI Cerdas untuk Tutor Bimbingan Belajar di HRIS PADI TECH.
@@ -16,6 +25,7 @@ Tugas utama Anda:
 2. Menjelaskan konsep materi yang rumit dengan analogi sederhana dan metode belajar yang mudah dipahami siswa.
 3. Memberikan ide ice-breaking, tips mengatasi siswa yang bosan atau kesulitan fokus.
 4. Membantu merumuskan catatan ringkasan evaluasi perkembangan belajar siswa untuk laporan orang tua.
+5. Menghasilkan ilustrasi/gambar visual edukatif jika diminta oleh tutor.
 Gaya respon: Terstruktur, ramah, edukatif, rapi tanpa simbol formatting aneh.
 ${NO_MARKDOWN_INSTRUCTION}`,
 
@@ -25,6 +35,7 @@ Tugas utama Anda:
 2. Menyusun script promosi produk (keranjang kuning) yang persuasif, interaktif, dan tidak membosankan.
 3. Memberikan strategi meningkatkan retensi penonton, interaksi (komentar, tap love, share).
 4. Memberikan tips meningkatkan GMV penjualan dan penawaran waktu terbatas (FOMO/urgensi).
+5. Menghasilkan ide visual banner/poster promosi live jika diminta.
 Gaya respon: Energik, kreatif, persuasif, aplikatif untuk live streaming TikTok.
 ${NO_MARKDOWN_INSTRUCTION}`,
 
@@ -34,6 +45,7 @@ Tugas utama Anda:
 2. Membantu formulasi KPI dan evaluasi efektivitas kinerja tutor bimbel dan host live.
 3. Menyusun draf pengumuman resmi perusahaan, SOP operasional, dan surat koordinasi tim.
 4. Memberikan rekomendasi efisiensi biaya operasional dan optimasi pendapatan (GMV & SPP bimbel).
+5. Menghasilkan visual infografis atau diagram strategi jika diminta.
 Gaya respon: Profesional, strategis, analitis, ringkas dan berorientasi hasil.
 ${NO_MARKDOWN_INSTRUCTION}`
 }
@@ -83,7 +95,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   requestLogs.set(clientIp, recentTimestamps)
 
   try {
-    const { prompt, role = 'tutor' } = req.body || {}
+    const { prompt, role = 'tutor', makeImage = false } = req.body || {}
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
       return res.status(400).json({ error: 'Prompt pertanyaan wajib diisi.' })
@@ -164,12 +176,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })
     }
 
+    // 1. Ekstraksi instruksi pembuatan gambar dari AI
+    let imageUrl: string | null = null
+    let imagePrompt: string | null = null
+
+    const imageMatch = rawAnswer.match(/\[IMAGE_PROMPT:\s*([^\]]+)\]/i)
+    if (imageMatch) {
+      imagePrompt = imageMatch[1].trim()
+      rawAnswer = rawAnswer.replace(/\[IMAGE_PROMPT:\s*([^\]]+)\]/i, '').trim()
+    }
+
+    // 2. Deteksi apakah permintaan adalah pembuatan gambar
+    const isImageRequest = 
+      Boolean(makeImage) ||
+      /\b(buatkan\s+gambar|buat\s+gambar|gambarin|bikin\s+gambar|lukiskan|ilustrasikan|visualisasikan|generate\s+image|foto|diagram|anatomi)\b/i.test(prompt)
+
+    if (!imagePrompt && isImageRequest) {
+      const cleanPromptForImage = prompt
+        .replace(/^(tolong\s+)?(buatkan\s+|bikin\s+|bikinin\s+)?(gambar\s+|ilustrasi\s+|foto\s+|diagram\s+)/i, '')
+        .trim()
+      imagePrompt = `educational high quality detailed illustration of ${cleanPromptForImage || prompt}, clear lighting, vibrant colors, 8k resolution`
+    }
+
+    // 3. Generate URL Pollinations Flux (Gratis, Unlimited, Cepat & Bebas Quota)
+    if (imagePrompt) {
+      const seed = Math.floor(Math.random() * 1000000)
+      imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(imagePrompt)}?width=1024&height=1024&nologo=true&seed=${seed}&model=flux`
+    }
+
     // Bersihkan semua simbol markdown agar jawaban langsung rapi tanpa bintang atau tanda pagar
     const cleanedAnswer = cleanAiResponseText(rawAnswer)
 
     return res.status(200).json({
       success: true,
-      answer: cleanedAnswer
+      answer: cleanedAnswer,
+      imageUrl,
+      imagePrompt
     })
   } catch (error: any) {
     console.error('AI Assistant server error:', error)

@@ -27,6 +27,7 @@ function aiAssistantDevPlugin(): Plugin {
             const parsed = JSON.parse(body || '{}')
             const prompt = parsed.prompt
             const role = parsed.role || 'tutor'
+            const makeImage = Boolean(parsed.makeImage)
 
             if (!prompt || typeof prompt !== 'string') {
               res.statusCode = 400
@@ -52,12 +53,21 @@ ATURAN FORMAT JAWABAN (WAJIB DIIKUTI):
 3. JANGAN PERNAH gunakan garis pemisah (---) atau tanda petik blok (>).
 4. Tuliskan jawaban secara langsung dalam teks bersih, alami, ramah, dan mengalir rapi.
 5. Gunakan penomoran biasa (1., 2., 3.) untuk daftar poin.
-6. Jawab secara lengkap, mendalam, tuntas sampai selesai, dan JANGAN terpotong di tengah kalimat.`
+6. Jawab secara lengkap, mendalam, tuntas sampai selesai, dan JANGAN terpotong di tengah kalimat.
+
+FITUR PEMBUATAN GAMBAR AI (GRATIS & UNLIMITED):
+Jika pengguna meminta membuat gambar, diagram, ilustrasi, foto, atau visualisasi materi (misalnya: 'buatkan gambar...', 'gambar...', 'ilustrasikan...', 'visualisasikan...', 'generate image', atau materi visual lainnya):
+- Anda SANGAT BISA dan MAMPU membuatkan gambar visual melalui AI generator terintegrasi. JANGAN PERNAH menolak dengan alasan 'saya berbasis teks dan tidak bisa mengirim gambar fisik'.
+- Berikan penjelasan materi/topik yang diminta dengan ramah dan edukatif.
+- Di BARIS PALING AKHIR jawaban Anda, sertakan instruksi prompt gambar berbahasa Inggris yang sangat deskriptif dan detail untuk model visual AI dengan format tepat:
+[IMAGE_PROMPT: detailed high-quality English description of the image, clear lighting, educational scientific or professional illustration, 8k resolution]
+Contoh:
+[IMAGE_PROMPT: educational detailed medical illustration of human internal anatomy organs front view, clear diagram, bright lighting, high resolution, 8k]`
 
             const SYSTEM_PROMPTS: Record<string, string> = {
-              tutor: `Anda adalah Asisten AI Cerdas untuk Tutor Bimbingan Belajar di HRIS PADI TECH. Tugas Anda: membuat soal latihan & kunci jawaban (SD-SMA), menjelaskan materi yang rumit secara sederhana, memberikan ide ice-breaking, dan merumuskan catatan evaluasi siswa. Berikan respon rapi, edukatif, dan ramah.\n${NO_MARKDOWN_INSTRUCTION}`,
-              host: `Anda adalah Asisten AI Cerdas untuk Host TikTok Live Commerce di HRIS PADI TECH. Tugas Anda: membuat hook pembuka live 3 detik pertama, menyusun script keranjang kuning persuasif, tips menaikkan retensi & interaksi penonton, dan strategi meningkatkan GMV penjualan. Berikan respon energik dan aplikatif.\n${NO_MARKDOWN_INSTRUCTION}`,
-              owner: `Anda adalah Penasihat AI Eksekutif Bisnis untuk Owner di HRIS PADI TECH. Tugas Anda: memberikan analisis strategi omset bimbel & live, KPI evaluasi tim, draf pengumuman resmi perusahaan, dan efisiensi operasional. Berikan respon profesional dan analitis.\n${NO_MARKDOWN_INSTRUCTION}`
+              tutor: `Anda adalah Asisten AI Cerdas untuk Tutor Bimbingan Belajar di HRIS PADI TECH. Tugas Anda: membuat soal latihan & kunci jawaban (SD-SMA), menjelaskan materi yang rumit secara sederhana, memberikan ide ice-breaking, merumuskan catatan evaluasi siswa, dan menghasilkan ilustrasi visual materi pembelajaran.\n${NO_MARKDOWN_INSTRUCTION}`,
+              host: `Anda adalah Asisten AI Cerdas untuk Host TikTok Live Commerce di HRIS PADI TECH. Tugas Anda: membuat hook pembuka live 3 detik pertama, menyusun script keranjang kuning persuasif, tips menaikkan retensi & interaksi penonton, strategi meningkatkan GMV penjualan, dan menghasilkan ide visual poster promosi live.\n${NO_MARKDOWN_INSTRUCTION}`,
+              owner: `Anda adalah Penasihat AI Eksekutif Bisnis untuk Owner di HRIS PADI TECH. Tugas Anda: memberikan analisis strategi omset bimbel & live, KPI evaluasi tim, draf pengumuman resmi perusahaan, efisiensi operasional, dan menghasilkan diagram strategi visual.\n${NO_MARKDOWN_INSTRUCTION}`
             }
 
             const systemPrompt = SYSTEM_PROMPTS[role] || SYSTEM_PROMPTS.tutor
@@ -118,6 +128,34 @@ ATURAN FORMAT JAWABAN (WAJIB DIIKUTI):
               return
             }
 
+            // 1. Ekstraksi instruksi pembuatan gambar dari AI
+            let imageUrl: string | null = null
+            let imagePrompt: string | null = null
+
+            const imageMatch = answer.match(/\[IMAGE_PROMPT:\s*([^\]]+)\]/i)
+            if (imageMatch) {
+              imagePrompt = imageMatch[1].trim()
+              answer = answer.replace(/\[IMAGE_PROMPT:\s*([^\]]+)\]/i, '').trim()
+            }
+
+            // 2. Deteksi apakah permintaan adalah pembuatan gambar
+            const isImageRequest = 
+              makeImage ||
+              /\b(buatkan\s+gambar|buat\s+gambar|gambarin|bikin\s+gambar|lukiskan|ilustrasikan|visualisasikan|generate\s+image|foto|diagram|anatomi)\b/i.test(prompt)
+
+            if (!imagePrompt && isImageRequest) {
+              const cleanPromptForImage = prompt
+                .replace(/^(tolong\s+)?(buatkan\s+|bikin\s+|bikinin\s+)?(gambar\s+|ilustrasi\s+|foto\s+|diagram\s+)/i, '')
+                .trim()
+              imagePrompt = `educational high quality detailed illustration of ${cleanPromptForImage || prompt}, clear lighting, vibrant colors, 8k resolution`
+            }
+
+            // 3. Generate URL Pollinations Flux (Gratis & Unlimited)
+            if (imagePrompt) {
+              const seed = Math.floor(Math.random() * 1000000)
+              imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(imagePrompt)}?width=1024&height=1024&nologo=true&seed=${seed}&model=flux`
+            }
+
             // Sanitasi teks agar bersih tanpa asterisks atau hashtags
             const cleanedAnswer = answer
               .replace(/\*\*(.*?)\*\*/g, '$1')
@@ -132,7 +170,12 @@ ATURAN FORMAT JAWABAN (WAJIB DIIKUTI):
 
             res.statusCode = 200
             res.setHeader('Content-Type', 'application/json')
-            res.end(JSON.stringify({ success: true, answer: cleanedAnswer }))
+            res.end(JSON.stringify({ 
+              success: true, 
+              answer: cleanedAnswer,
+              imageUrl,
+              imagePrompt
+            }))
           } catch (err: any) {
             res.statusCode = 500
             res.setHeader('Content-Type', 'application/json')

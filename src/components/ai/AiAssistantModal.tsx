@@ -19,7 +19,10 @@ import {
   Plus,
   MessageSquare,
   Search,
-  Menu
+  Menu,
+  Download,
+  Maximize2,
+  Image as ImageIcon
 } from 'lucide-react'
 
 function generateUUID(): string {
@@ -39,6 +42,7 @@ interface ChatMessage {
   session_title?: string
   sender: 'user' | 'ai'
   text: string
+  image_url?: string
   timestamp: string
   createdAt: string
 }
@@ -56,9 +60,11 @@ const ROLE_PRESETS = {
     badgeColor: 'border-blue-200 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
     icon: GraduationCap,
     gradient: 'from-blue-600 to-indigo-600',
-    greeting: 'Halo! Saya adalah Asisten AI Tutor Bimbel HRIS PADI TECH. Ada materi, soal latihan, atau ide evaluasi siswa yang ingin saya buatkan hari ini?',
+    greeting: 'Halo! Saya adalah Asisten AI Tutor Bimbel HRIS PADI TECH. Ada materi, soal latihan, ide evaluasi siswa, atau gambar ilustrasi yang ingin saya buatkan hari ini?',
     suggestions: [
+      '🎨 Buatkan gambar anatomi organ tubuh depan manusia untuk materi IPA SD/SMP.',
       'Buatkan 5 soal latihan Matematika pecahan kelas 5 SD beserta kunci jawaban dan cara penyelesaian.',
+      '🎨 Buatkan gambar ilustrasi tata surya dan orbit planet untuk materi sains.',
       'Bagaimana cara menjelaskan konsep organel sel biologi agar mudah diingat anak SMP?',
       'Buatkan draf kalimat evaluasi perkembangan belajar positif untuk siswa yang aktif tapi kurang teliti.',
       'Berikan ide ice-breaking edukatif 5 menit di awal sesi les bimbingan belajar.'
@@ -70,8 +76,9 @@ const ROLE_PRESETS = {
     badgeColor: 'border-pink-200 bg-pink-50 text-pink-700 dark:bg-pink-950 dark:text-pink-300',
     icon: Video,
     gradient: 'from-pink-600 to-purple-600',
-    greeting: 'Halo! Saya adalah Asisten AI Host Live Commerce HRIS PADI TECH. Siap membantu membuat script live viral dan strategi GMV hari ini?',
+    greeting: 'Halo! Saya adalah Asisten AI Host Live Commerce HRIS PADI TECH. Siap membantu membuat script live viral, ide banner promosi, dan strategi GMV hari ini?',
     suggestions: [
+      '🎨 Buatkan gambar banner promosi diskon spesial TikTok Live Commerce keranjang kuning.',
       'Buatkan 3 kalimat hook pembuka live streaming TikTok dalam 3 detik pertama agar penonton tidak scroll.',
       'Buatkan script ajakan checkout (Call To Action) keranjang kuning yang persuasif dan ada urgensi waktu.',
       'Tips menjaga energi dan retensi penonton live saat views sedang turun di menit ke-30.',
@@ -84,8 +91,9 @@ const ROLE_PRESETS = {
     badgeColor: 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300',
     icon: ShieldCheck,
     gradient: 'from-indigo-600 to-slate-900',
-    greeting: 'Selamat datang, Owner. Saya siap mendampingi analisis pertumbuhan bisnis bimbel dan live commerce HRIS PADI TECH.',
+    greeting: 'Selamat datang, Owner. Saya siap mendampingi analisis pertumbuhan bisnis bimbel, live commerce, dan pembuatan materi visual HRIS PADI TECH.',
     suggestions: [
+      '🎨 Buatkan gambar infografis strategi bisnis pertumbuhan bimbel dan live commerce.',
       'Bagaimana strategi meningkatkan omset bimbel dan live commerce secara bersamaan di bulan ini?',
       'Buatkan draf pengumuman resmi ke seluruh karyawan terkait kedisiplinan pengisian laporan harian.',
       'Berikan indikator KPI yang adil dan memotivasi untuk Tutor Bimbel dan Host TikTok Live.',
@@ -102,6 +110,8 @@ export const AiAssistantModal: React.FC = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [searchSessionQuery, setSearchSessionQuery] = useState('')
+  const [isImageMode, setIsImageMode] = useState(false)
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null)
 
   // State Sessions & Messages
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => generateUUID())
@@ -139,15 +149,28 @@ export const AiAssistantModal: React.FC = () => {
         .order('created_at', { ascending: true })
 
       if (!error && data) {
-        const mapped: ChatMessage[] = data.map((d: any) => ({
-          id: d.id,
-          session_id: d.session_id || 'default-session',
-          session_title: d.session_title || undefined,
-          sender: d.message_role === 'user' ? 'user' : 'ai',
-          text: sanitizeAiText(d.content),
-          timestamp: new Date(d.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
-          createdAt: d.created_at,
-        }))
+        const mapped: ChatMessage[] = data.map((d: any) => {
+          let text = sanitizeAiText(d.content || '')
+          let imageUrl: string | undefined = d.image_url || undefined
+
+          // Ekstraksi tag URL gambar jika tersimpan di dalam content
+          const imgMatch = text.match(/\[AI_IMAGE_URL:\s*(https?:\/\/[^\s\]]+)\]/)
+          if (imgMatch) {
+            imageUrl = imgMatch[1]
+            text = text.replace(/\[AI_IMAGE_URL:\s*(https?:\/\/[^\s\]]+)\]/, '').trim()
+          }
+
+          return {
+            id: d.id,
+            session_id: d.session_id || 'default-session',
+            session_title: d.session_title || undefined,
+            sender: d.message_role === 'user' ? 'user' : 'ai',
+            text,
+            image_url: imageUrl,
+            timestamp: new Date(d.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+            createdAt: d.created_at,
+          }
+        })
         setAllMessages(mapped)
 
         // Hanya saat pertama kali modal dibuka: pilih sesi tersimpan yang paling baru
@@ -310,11 +333,30 @@ export const AiAssistantModal: React.FC = () => {
     }
   }
 
+  // Download Gambar AI HD
+  const handleDownloadImage = async (url: string, filename: string) => {
+    try {
+      const res = await fetch(url)
+      const blob = await res.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = `${filename.replace(/[^a-zA-Z0-9_-]/g, '_')}_ai.jpg`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(blobUrl)
+    } catch {
+      window.open(url, '_blank')
+    }
+  }
+
   // Kirim Pesan ke AI
-  const handleSendMessage = async (textToSend?: string) => {
+  const handleSendMessage = async (textToSend?: string, forceMakeImage?: boolean) => {
     const text = (textToSend || prompt).trim()
     if (!text || isLoading) return
 
+    const makeImage = Boolean(forceMakeImage ?? isImageMode)
     const userMsgId = generateUUID()
     const userTimestamp = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
     const nowIso = new Date().toISOString()
@@ -370,6 +412,7 @@ export const AiAssistantModal: React.FC = () => {
         body: JSON.stringify({
           prompt: text,
           role: currentRole,
+          makeImage,
         }),
       })
 
@@ -379,6 +422,7 @@ export const AiAssistantModal: React.FC = () => {
       }
 
       const cleanAnswer = sanitizeAiText(data.answer || 'Respon tidak ditemukan.')
+      const returnedImageUrl: string | undefined = data.imageUrl || undefined
       const aiMsgId = generateUUID()
 
       const aiMsg: ChatMessage = {
@@ -387,32 +431,41 @@ export const AiAssistantModal: React.FC = () => {
         session_title: sessionTitle,
         sender: 'ai',
         text: cleanAnswer,
+        image_url: returnedImageUrl,
         timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
         createdAt: new Date().toISOString(),
       }
 
       setAllMessages((prev) => [...prev, aiMsg])
 
-      // Simpan respon AI ke Supabase
+      // Simpan respon AI ke Supabase (tersimpan baik dengan kolom image_url maupun embed content)
       if (user?.id) {
         try {
+          const contentToSave = returnedImageUrl
+            ? `${cleanAnswer}\n\n[AI_IMAGE_URL: ${returnedImageUrl}]`
+            : cleanAnswer
+
           const payload: any = {
             id: aiMsgId,
             user_id: user.id,
             role: currentRole,
             message_role: 'assistant',
-            content: cleanAnswer,
+            content: contentToSave,
             session_id: activeSessionId,
             session_title: sessionTitle,
+            image_url: returnedImageUrl || null,
           }
           const { error: insErr } = await supabase.from('ai_chat_history').insert(payload)
           if (insErr) {
             console.warn('Notice inserting AI message:', insErr)
+            if (insErr.message?.includes('image_url') || insErr.message?.includes('column')) {
+              delete payload.image_url
+            }
             if (insErr.message?.includes('session_id')) {
               delete payload.session_id
               delete payload.session_title
-              await supabase.from('ai_chat_history').insert(payload)
             }
+            await supabase.from('ai_chat_history').insert(payload)
           }
         } catch (err) {
           console.debug('Insert AI message notice:', err)
@@ -432,6 +485,7 @@ export const AiAssistantModal: React.FC = () => {
       setAllMessages((prev) => [...prev, errorMsg])
     } finally {
       setIsLoading(false)
+      setIsImageMode(false)
       setTimeout(() => inputRef.current?.focus(), 100)
     }
   }
@@ -699,6 +753,56 @@ export const AiAssistantModal: React.FC = () => {
                             {msg.text}
                           </div>
 
+                          {/* Tampilan Gambar AI Resolusi Tinggi jika tersedia */}
+                          {msg.image_url && (
+                            <div className="mt-2.5 overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-md">
+                              <div className="relative group/img overflow-hidden flex items-center justify-center bg-slate-950 min-h-[180px] max-h-[380px]">
+                                <img
+                                  src={msg.image_url}
+                                  alt="Gambar Ilustrasi AI HRIS PADI TECH"
+                                  className="w-full h-auto max-h-[380px] object-contain rounded-t-xl transition-transform duration-300 group-hover/img:scale-[1.02] cursor-pointer"
+                                  onClick={() => setPreviewImageUrl(msg.image_url || null)}
+                                  loading="lazy"
+                                />
+                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-2 pointer-events-none">
+                                  <button
+                                    type="button"
+                                    onClick={() => setPreviewImageUrl(msg.image_url || null)}
+                                    className="pointer-events-auto p-2 rounded-lg bg-slate-900/90 hover:bg-slate-800 text-white shadow-md text-xs flex items-center gap-1.5 backdrop-blur transition-all cursor-pointer"
+                                    title="Perbesar Gambar"
+                                  >
+                                    <Maximize2 className="h-3.5 w-3.5" />
+                                    <span>Perbesar</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDownloadImage(msg.image_url!, msg.session_title || 'gambar_ai')}
+                                    className="pointer-events-auto p-2 rounded-lg bg-blue-600/90 hover:bg-blue-600 text-white shadow-md text-xs flex items-center gap-1.5 backdrop-blur transition-all cursor-pointer"
+                                    title="Unduh Gambar HD"
+                                  >
+                                    <Download className="h-3.5 w-3.5" />
+                                    <span>Unduh</span>
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="px-3 py-1.5 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
+                                <span className="flex items-center gap-1 text-blue-400 font-medium">
+                                  <Sparkles className="h-3 w-3 text-amber-300" />
+                                  Ilustrasi Visual AI (Flux HD Gratis & Unlimited)
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadImage(msg.image_url!, msg.session_title || 'gambar_ai')}
+                                  className="text-slate-400 hover:text-white flex items-center gap-1 transition-colors cursor-pointer"
+                                  title="Simpan ke Perangkat"
+                                >
+                                  <Download className="h-3 w-3" />
+                                  Simpan HD
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Footer Info & Action Buttons */}
                           <div
                             className={`flex items-center justify-between pt-1 border-t ${
@@ -714,7 +818,7 @@ export const AiAssistantModal: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => handleCopy(msg.id, msg.text)}
-                                  className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                                  className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
                                   title="Salin Teks"
                                 >
                                   {copiedId === msg.id ? (
@@ -725,16 +829,26 @@ export const AiAssistantModal: React.FC = () => {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => exportAiContentToPdf(msg.text, currentRole)}
-                                  className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-amber-300 transition-colors"
-                                  title="Cetak PDF Soal/Materi Ini"
+                                  onClick={() => exportAiContentToPdf(msg.text, currentRole, msg.session_title, msg.image_url)}
+                                  className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-amber-300 transition-colors cursor-pointer"
+                                  title="Cetak PDF Soal/Materi Beserta Gambar"
                                 >
                                   <FileDown className="h-3 w-3" />
                                 </button>
+                                {msg.image_url && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDownloadImage(msg.image_url!, msg.session_title || 'gambar_ai')}
+                                    className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-blue-300 transition-colors cursor-pointer"
+                                    title="Unduh File Gambar HD"
+                                  >
+                                    <Download className="h-3 w-3" />
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => handleDeleteMessage(msg.id)}
-                                  className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-red-400 transition-colors"
+                                  className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-red-400 transition-colors cursor-pointer"
                                   title="Hapus Pesan Ini"
                                 >
                                   <Trash2 className="h-3 w-3" />
@@ -761,7 +875,11 @@ export const AiAssistantModal: React.FC = () => {
                         </div>
                         <div className="bg-slate-800/90 border border-slate-700/60 rounded-2xl rounded-bl-xs px-4 py-3 text-xs text-slate-300 flex items-center gap-2.5">
                           <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
-                          <span>Gemini AI sedang berpikir & menyusun jawaban tuntas...</span>
+                          <span>
+                            {isImageMode 
+                              ? 'Gemini & AI Visual sedang membuat materi dan menghasilkan gambar HD...' 
+                              : 'Gemini AI sedang berpikir & menyusun jawaban tuntas...'}
+                          </span>
                         </div>
                       </div>
                     )}
@@ -774,6 +892,27 @@ export const AiAssistantModal: React.FC = () => {
               {/* Bottom Floating Input Bar (Gemini Style) */}
               <div className="p-3 sm:p-4 border-t border-slate-800 bg-slate-950/90 shrink-0">
                 <div className="max-w-3xl mx-auto space-y-2">
+                  {/* Indicator Mode Gambar jika aktif */}
+                  {isImageMode && (
+                    <div className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-purple-950/70 border border-purple-500/40 text-purple-200 text-xs animate-in fade-in">
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles className="h-3.5 w-3.5 text-purple-300 animate-pulse" />
+                        <span className="font-semibold text-[11px]">Mode Gambar AI Aktif:</span>
+                        <span className="text-[11px] text-purple-300">
+                          AI akan membuat teks penjelasan serta menghasilkan gambar visual HD (Gratis & Unlimited)
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsImageMode(false)}
+                        className="p-0.5 rounded hover:bg-purple-900 text-purple-400 hover:text-white cursor-pointer"
+                        title="Nonaktifkan Mode Gambar"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  )}
+
                   <div className="relative flex items-center rounded-2xl bg-slate-900 border border-slate-750 focus-within:border-blue-500/80 shadow-inner transition-colors">
                     <textarea
                       ref={inputRef}
@@ -781,33 +920,96 @@ export const AiAssistantModal: React.FC = () => {
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
                       onKeyDown={handleKeyDown}
-                      placeholder={`Tanyakan apa saja kepada ${config.title}...`}
+                      placeholder={
+                        isImageMode
+                          ? 'Tulis deskripsi gambar yang ingin dibuat (misal: anatomi organ tubuh, tata surya, pecahan matematika)...'
+                          : `Tanyakan apa saja kepada ${config.title}... (bisa minta buatkan gambar)`
+                      }
                       disabled={isLoading}
-                      className="w-full resize-none py-3.5 pl-4 pr-12 text-xs sm:text-sm bg-transparent text-slate-100 placeholder:text-slate-500 focus:outline-none max-h-32"
+                      className="w-full resize-none py-3.5 pl-4 pr-24 text-xs sm:text-sm bg-transparent text-slate-100 placeholder:text-slate-500 focus:outline-none max-h-32"
                     />
 
-                    <button
-                      type="button"
-                      onClick={() => handleSendMessage()}
-                      disabled={isLoading || !prompt.trim()}
-                      className="absolute right-2 p-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white shadow-xs transition-all cursor-pointer"
-                      title="Kirim Pertanyaan"
-                    >
-                      {isLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4" />
-                      )}
-                    </button>
+                    {/* Tombol Aksi di Kanan Input Bar */}
+                    <div className="absolute right-2 flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setIsImageMode(!isImageMode)}
+                        className={`p-1.5 px-2.5 rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                          isImageMode
+                            ? 'bg-purple-600 text-white shadow-xs shadow-purple-500/30'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                        }`}
+                        title="Aktifkan Mode Gambar AI (Gratis & Unlimited)"
+                      >
+                        <ImageIcon className="h-3.5 w-3.5" />
+                        <span className="text-[11px] hidden sm:inline font-medium">Buat Gambar</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleSendMessage()}
+                        disabled={isLoading || !prompt.trim()}
+                        className="p-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white shadow-xs transition-all cursor-pointer"
+                        title="Kirim Pertanyaan"
+                      >
+                        {isLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   <p className="text-[10px] text-center text-slate-500">
-                    Asisten AI HRIS PADI TECH bertenaga Gemini. Jawaban tersimpan otomatis secara realtime di database Supabase.
+                    Asisten AI HRIS PADI TECH bertenaga Gemini & Flux Visual. Bebas kuota (gratis & unlimited), tersimpan otomatis di database Supabase.
                   </p>
                 </div>
               </div>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox Modal Fullscreen untuk Preview Gambar AI */}
+      {previewImageUrl && (
+        <div 
+          onClick={() => setPreviewImageUrl(null)} 
+          className="fixed inset-0 z-[70] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-in fade-in"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()} 
+            className="relative max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-800 rounded-2xl p-3 overflow-hidden shadow-2xl flex flex-col items-center"
+          >
+            <div className="w-full flex justify-between items-center px-2 py-1.5 border-b border-slate-800 mb-2">
+              <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-blue-400" />
+                Gambar Ilustrasi AI Resolusi Penuh (Flux HD)
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleDownloadImage(previewImageUrl, 'gambar_ai_hris')}
+                  className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Unduh HD</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewImageUrl(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <img
+              src={previewImageUrl}
+              alt="Preview Gambar AI"
+              className="max-h-[75vh] w-auto object-contain rounded-xl shadow-inner"
+            />
           </div>
         </div>
       )}

@@ -1,10 +1,38 @@
 import jsPDF from 'jspdf'
 
+async function loadBase64Image(url: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = img.naturalWidth || img.width
+        canvas.height = img.naturalHeight || img.height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return resolve(null)
+        ctx.drawImage(img, 0, 0)
+        resolve(canvas.toDataURL('image/jpeg', 0.85))
+      } catch {
+        resolve(null)
+      }
+    }
+    img.onerror = () => resolve(null)
+    img.src = url
+  })
+}
+
 /**
  * Ekspor teks hasil pembuatan soal / penjelasan materi AI menjadi file PDF resmi
  * dengan branding HRIS PADI TECH, margin rapi, dan multi-page auto-splitting.
+ * Mendukung penyisipan gambar AI ilustrasi materi jika tersedia.
  */
-export function exportAiContentToPdf(content: string, role: string = 'tutor', promptContext?: string) {
+export async function exportAiContentToPdf(
+  content: string, 
+  role: string = 'tutor', 
+  promptContext?: string,
+  imageUrl?: string
+) {
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -48,6 +76,26 @@ export function exportAiContentToPdf(content: string, role: string = 'tutor', pr
     const promptText = `Topik / Instruksi: "${promptContext.slice(0, 90)}${promptContext.length > 90 ? '...' : ''}"`
     doc.text(promptText, margin + 4, cursorY + 7)
     cursorY += 16
+  }
+
+  // 3. Sisipkan Gambar AI jika tersedia
+  if (imageUrl) {
+    try {
+      const base64 = await loadBase64Image(imageUrl)
+      if (base64) {
+        const imgWidth = 95
+        const imgHeight = 72
+        const imgX = margin + (maxContentWidth - imgWidth) / 2
+        if (cursorY + imgHeight > pageHeight - 25) {
+          doc.addPage()
+          cursorY = 20
+        }
+        doc.addImage(base64, 'JPEG', imgX, cursorY, imgWidth, imgHeight)
+        cursorY += imgHeight + 8
+      }
+    } catch (e) {
+      console.warn('Notice embedding AI image in PDF:', e)
+    }
   }
 
   // 3. Render Konten Teks
