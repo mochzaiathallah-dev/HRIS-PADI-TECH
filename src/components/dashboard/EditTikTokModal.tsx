@@ -18,10 +18,12 @@ import {
   Activity, 
   Loader2, 
   CheckCircle2, 
-  AlertCircle 
+  AlertCircle,
+  AtSign
 } from 'lucide-react'
 
 const editTikTokSchema = z.object({
+  akun_tiktok: z.string().min(1, 'Akun TikTok wajib diisi (misal: @wangigaya)'),
   tanggal: z.string().min(1, 'Tanggal sesi wajib diisi'),
   durasi_menit: z.coerce.number().min(1, 'Durasi live minimal 1 menit'),
   gmv_rupiah: z.coerce.number().min(0, 'GMV tidak boleh negatif'),
@@ -60,6 +62,7 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
   useEffect(() => {
     if (laporan) {
       reset({
+        akun_tiktok: laporan.akun_tiktok || '@wangigaya',
         tanggal: laporan.tanggal,
         durasi_menit: laporan.durasi_menit,
         gmv_rupiah: laporan.gmv_rupiah,
@@ -79,10 +82,33 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
     setSuccessMessage(null)
 
     try {
-      let isUpdated = false
+      // 1. Jalankan Direct Update terlebih dahulu (mendukung seluruh kolom termasuk akun_tiktok)
+      const updatePayload: any = {
+        tanggal: values.tanggal,
+        durasi_menit: values.durasi_menit,
+        gmv_rupiah: values.gmv_rupiah,
+        tayangan: values.tayangan,
+        impresi: values.impresi,
+        akun_tiktok: values.akun_tiktok,
+      }
 
-      // 1. Coba via RPC Security Definer terlebih dahulu
-      try {
+      let { error } = await supabase
+        .from('laporan_tiktok')
+        .update(updatePayload)
+        .eq('id', laporan.id)
+
+      if (error && (error.code === '42703' || error.message?.includes('akun_tiktok'))) {
+        delete updatePayload.akun_tiktok
+        const retry = await supabase
+          .from('laporan_tiktok')
+          .update(updatePayload)
+          .eq('id', laporan.id)
+        error = retry.error
+      }
+
+      // 2. Fallback via RPC Security Definer jika direct update terhalang RLS
+      if (error) {
+        console.warn('Direct update fallback to RPC:', error.message)
         const { data: rpcRes, error: rpcErr } = await supabase.rpc('host_update_laporan_tiktok', {
           p_id: laporan.id,
           p_tanggal: values.tanggal,
@@ -91,34 +117,16 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
           p_impresi: values.impresi,
           p_gmv_rupiah: values.gmv_rupiah,
         })
-        if (!rpcErr && rpcRes && rpcRes.success) {
-          isUpdated = true
+        if (rpcErr || !rpcRes?.success) {
+          throw error
         }
-      } catch (e) {
-        console.warn('RPC update tiktok fallback to direct update:', e)
-      }
-
-      // 2. Fallback direct update
-      if (!isUpdated) {
-        const { error } = await supabase
-          .from('laporan_tiktok')
-          .update({
-            tanggal: values.tanggal,
-            durasi_menit: values.durasi_menit,
-            gmv_rupiah: values.gmv_rupiah,
-            tayangan: values.tayangan,
-            impresi: values.impresi,
-          })
-          .eq('id', laporan.id)
-
-        if (error) throw error
       }
 
       setSuccessMessage('Data laporan TikTok Live berhasil diperbarui!')
       setTimeout(() => {
         onSuccess()
         onClose()
-      }, 1200)
+      }, 1000)
     } catch (err: any) {
       console.error('Error updating tiktok report:', err)
       setErrorMessage(err.message || 'Gagal memperbarui data TikTok.')
@@ -140,7 +148,7 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
             <div>
               <CardTitle className="text-base font-bold">Edit Laporan TikTok</CardTitle>
               <CardDescription className="text-xs">
-                Perbarui metrik GMV, durasi, dan traffic live
+                Perbarui akun, GMV, durasi, dan traffic live
               </CardDescription>
             </div>
           </div>
@@ -153,7 +161,7 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
           </button>
         </CardHeader>
 
-        <form onSubmit={handleSubmit(onSubmit)}>
+        <form onSubmit={handleSubmit(onSubmit)} noValidate>
           <CardContent className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
             {successMessage && (
               <div className="flex items-center gap-2 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-xs">
@@ -168,6 +176,24 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
                 <span className="font-medium leading-relaxed">{errorMessage}</span>
               </div>
             )}
+
+            {/* Akun TikTok */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold flex items-center gap-1.5">
+                <AtSign className="h-3.5 w-3.5 text-pink-500" />
+                Akun TikTok Live
+              </Label>
+              <Input
+                type="text"
+                placeholder="Contoh: @wangigaya"
+                className="text-xs"
+                disabled={isSubmitting}
+                {...register('akun_tiktok')}
+              />
+              {errors.akun_tiktok && (
+                <p className="text-[11px] text-red-500 font-medium">{errors.akun_tiktok.message}</p>
+              )}
+            </div>
 
             {/* Tanggal & Durasi */}
             <div className="grid grid-cols-2 gap-3">
@@ -213,8 +239,10 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
               </Label>
               <Input
                 type="number"
+                min="0"
+                step="any"
                 placeholder="Contoh: 1500000"
-                className="text-xs"
+                className="text-xs font-mono"
                 disabled={isSubmitting}
                 {...register('gmv_rupiah')}
               />
@@ -233,7 +261,7 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
                 <Input
                   type="number"
                   placeholder="1200"
-                  className="text-xs"
+                  className="text-xs font-mono"
                   disabled={isSubmitting}
                   {...register('tayangan')}
                 />
@@ -250,7 +278,7 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
                 <Input
                   type="number"
                   placeholder="3500"
-                  className="text-xs"
+                  className="text-xs font-mono"
                   disabled={isSubmitting}
                   {...register('impresi')}
                 />

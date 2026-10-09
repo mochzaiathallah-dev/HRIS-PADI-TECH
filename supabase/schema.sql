@@ -59,8 +59,11 @@ CREATE TABLE IF NOT EXISTS public.laporan_tiktok (
     tayangan INTEGER NOT NULL DEFAULT 0 CHECK (tayangan >= 0),
     impresi INTEGER NOT NULL DEFAULT 0 CHECK (impresi >= 0),
     foto_bukti_url TEXT,
+    akun_tiktok TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
+
+ALTER TABLE public.laporan_tiktok ADD COLUMN IF NOT EXISTS akun_tiktok TEXT;
 
 -- 7. HELPER FUNCTION: IS_OWNER (Security Definer untuk menghindari rekursi RLS)
 CREATE OR REPLACE FUNCTION public.is_owner()

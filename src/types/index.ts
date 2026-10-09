@@ -45,6 +45,7 @@ export interface LaporanTiktok {
   tayangan: number
   impresi: number
   foto_bukti_url?: string | null
+  akun_tiktok?: string | null
   created_at?: string
   // Join properties
   host?: {

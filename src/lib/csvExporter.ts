@@ -27,6 +27,7 @@ export function exportTikTokToCSV(data: LaporanTiktok[], fileName: string = 'lap
   const formattedData = data.map((item, index) => ({
     No: index + 1,
     Tanggal: item.tanggal,
+    'Akun TikTok': item.akun_tiktok || '@wangigaya',
     Host: item.host?.nama || '-',
     'Durasi (Menit)': item.durasi_menit,
     'GMV (Rupiah)': item.gmv_rupiah,
