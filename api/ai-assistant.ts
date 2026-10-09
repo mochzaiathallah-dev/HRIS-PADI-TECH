@@ -73,6 +73,46 @@ export function cleanAiResponseText(rawText: string): string {
 // Simple in-memory rate limiter per IP (prevents flood/DDoS)
 const requestLogs = new Map<string, number[]>()
 
+async function generateBananaImage(imagePrompt: string, apiKey: string): Promise<{ imageUrl: string; modelName: string } | null> {
+  const BANANA_MODELS = [
+    'gemini-3-pro-image',     // Nano Banana Pro (Gemini 3 Pro Image)
+    'gemini-2.5-flash-image', // Nano Banana (Gemini 2.5 Flash Image)
+    'gemini-3.1-flash-image'  // Nano Banana 2
+  ]
+
+  for (const model of BANANA_MODELS) {
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: imagePrompt }] }]
+          }),
+        }
+      )
+
+      if (response.ok) {
+        const data = (await response.json()) as any
+        const candidate = data.candidates?.[0]
+        const inlinePart = candidate?.content?.parts?.find((p: any) => p.inlineData)
+        if (inlinePart?.inlineData?.data) {
+          const mime = inlinePart.inlineData.mimeType || 'image/jpeg'
+          return {
+            imageUrl: `data:${mime};base64,${inlinePart.inlineData.data}`,
+            modelName: model.includes('3-pro') ? 'Nano Banana Pro' : 'Nano Banana'
+          }
+        }
+      }
+    } catch {
+      // Continue to next model or fallback
+    }
+  }
+
+  return null
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Hanya menerima metode POST
   if (req.method !== 'POST') {
@@ -127,7 +167,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ],
       generationConfig: {
         temperature: 0.7,
-        maxOutputTokens: 8192, // Token tinggi agar jawaban tuntas dan tidak pernah terpotong di tengah
+        maxOutputTokens: 8192,
       }
     }
 
@@ -179,6 +219,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 1. Ekstraksi instruksi pembuatan gambar dari AI
     let imageUrl: string | null = null
     let imagePrompt: string | null = null
+    let generatorEngine = 'Visual AI Free Engine'
 
     const imageMatch = rawAnswer.match(/\[IMAGE_PROMPT:\s*([^\]]+)\]/i)
     if (imageMatch) {
@@ -189,19 +230,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 2. Deteksi apakah permintaan adalah pembuatan gambar
     const isImageRequest = 
       Boolean(makeImage) ||
-      /\b(buatkan\s+gambar|buat\s+gambar|gambarin|bikin\s+gambar|lukiskan|ilustrasikan|visualisasikan|generate\s+image|foto|diagram|anatomi)\b/i.test(prompt)
+      /\b(buatkan\s+gambar|buat\s+gambar|gambarin|bikin\s+gambar|lukiskan|ilustrasikan|visualisasikan|generate\s+image|foto|diagram|anatomi|reproduksi|organ)\b/i.test(prompt)
 
     if (!imagePrompt && isImageRequest) {
       const cleanPromptForImage = prompt
         .replace(/^(tolong\s+)?(buatkan\s+|bikin\s+|bikinin\s+)?(gambar\s+|ilustrasi\s+|foto\s+|diagram\s+)/i, '')
         .trim()
-      imagePrompt = `educational high quality detailed illustration of ${cleanPromptForImage || prompt}, clear lighting, vibrant colors, 8k resolution`
+      imagePrompt = `clean 2D scientific medical textbook diagram of ${cleanPromptForImage || prompt}, white clean background, educational vector illustration, sharp clear lines, labeled diagram`
     }
 
-    // 3. Generate URL Pollinations Flux (Gratis, Unlimited, Cepat & Bebas Quota)
+    // 3. Eksekusi Pembuatan Gambar: Coba Google Nano Banana Pro terlebih dahulu, lalu fallback ke Visual Engine
     if (imagePrompt) {
-      const seed = Math.floor(Math.random() * 1000000)
-      imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(imagePrompt)}?width=1024&height=1024&nologo=true&seed=${seed}&model=flux`
+      const banana = await generateBananaImage(imagePrompt, apiKey)
+      if (banana) {
+        imageUrl = banana.imageUrl
+        generatorEngine = banana.modelName
+      } else {
+        // Fallback: visual engine dengan prompt terarah gaya textbook 2D agar tajam dan tidak blur
+        let refinedPrompt = imagePrompt
+        const isScientific = /\b(anatomy|organ|internal|body|biology|cell|heart|lung|reproduction|reproduksi|diagram|sains|ipa|biologi)\b/i.test(imagePrompt)
+        if (isScientific) {
+          refinedPrompt = `clean 2D scientific medical textbook diagram of ${imagePrompt}, anatomical chart, white clean background, educational vector illustration, sharp clear lines, labeled biological diagram, professional textbook graphic, no blurry 3D`
+        }
+        const seed = Math.floor(Math.random() * 1000000)
+        imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(refinedPrompt)}?width=1024&height=1024&nologo=true&seed=${seed}`
+      }
     }
 
     // Bersihkan semua simbol markdown agar jawaban langsung rapi tanpa bintang atau tanda pagar
@@ -211,7 +264,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       success: true,
       answer: cleanedAnswer,
       imageUrl,
-      imagePrompt
+      imagePrompt,
+      generatorEngine
     })
   } catch (error: any) {
     console.error('AI Assistant server error:', error)

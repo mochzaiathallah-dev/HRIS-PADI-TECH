@@ -131,6 +131,7 @@ Contoh:
             // 1. Ekstraksi instruksi pembuatan gambar dari AI
             let imageUrl: string | null = null
             let imagePrompt: string | null = null
+            let generatorEngine = 'Visual AI Free Engine'
 
             const imageMatch = answer.match(/\[IMAGE_PROMPT:\s*([^\]]+)\]/i)
             if (imageMatch) {
@@ -141,19 +142,55 @@ Contoh:
             // 2. Deteksi apakah permintaan adalah pembuatan gambar
             const isImageRequest = 
               makeImage ||
-              /\b(buatkan\s+gambar|buat\s+gambar|gambarin|bikin\s+gambar|lukiskan|ilustrasikan|visualisasikan|generate\s+image|foto|diagram|anatomi)\b/i.test(prompt)
+              /\b(buatkan\s+gambar|buat\s+gambar|gambarin|bikin\s+gambar|lukiskan|ilustrasikan|visualisasikan|generate\s+image|foto|diagram|anatomi|reproduksi|organ)\b/i.test(prompt)
 
             if (!imagePrompt && isImageRequest) {
               const cleanPromptForImage = prompt
                 .replace(/^(tolong\s+)?(buatkan\s+|bikin\s+|bikinin\s+)?(gambar\s+|ilustrasi\s+|foto\s+|diagram\s+)/i, '')
                 .trim()
-              imagePrompt = `educational high quality detailed illustration of ${cleanPromptForImage || prompt}, clear lighting, vibrant colors, 8k resolution`
+              imagePrompt = `clean 2D scientific medical textbook diagram of ${cleanPromptForImage || prompt}, white clean background, educational vector illustration, sharp clear lines, labeled diagram`
             }
 
-            // 3. Generate URL Pollinations Flux (Gratis & Unlimited)
+            // 3. Eksekusi Pembuatan Gambar: Coba Google Nano Banana Pro lalu fallback ke Visual Engine
             if (imagePrompt) {
-              const seed = Math.floor(Math.random() * 1000000)
-              imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(imagePrompt)}?width=1024&height=1024&nologo=true&seed=${seed}&model=flux`
+              const BANANA_MODELS = ['gemini-3-pro-image', 'gemini-2.5-flash-image', 'gemini-3.1-flash-image']
+              let bananaFound = false
+
+              for (const bModel of BANANA_MODELS) {
+                try {
+                  const bRes = await fetch(
+                    `https://generativelanguage.googleapis.com/v1beta/models/${bModel}:generateContent?key=${apiKey}`,
+                    {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ contents: [{ parts: [{ text: imagePrompt }] }] })
+                    }
+                  )
+                  if (bRes.ok) {
+                    const bData = (await bRes.json()) as any
+                    const inlinePart = bData.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData)
+                    if (inlinePart?.inlineData?.data) {
+                      const mime = inlinePart.inlineData.mimeType || 'image/jpeg'
+                      imageUrl = `data:${mime};base64,${inlinePart.inlineData.data}`
+                      generatorEngine = bModel.includes('3-pro') ? 'Nano Banana Pro' : 'Nano Banana'
+                      bananaFound = true
+                      break
+                    }
+                  }
+                } catch {
+                  // Fallback
+                }
+              }
+
+              if (!bananaFound) {
+                let refinedPrompt = imagePrompt
+                const isScientific = /\b(anatomy|organ|internal|body|biology|cell|heart|lung|reproduction|reproduksi|diagram|sains|ipa|biologi)\b/i.test(imagePrompt)
+                if (isScientific) {
+                  refinedPrompt = `clean 2D scientific medical textbook diagram of ${imagePrompt}, anatomical chart, white clean background, educational vector illustration, sharp clear lines, labeled biological diagram, professional textbook graphic, no blurry 3D`
+                }
+                const seed = Math.floor(Math.random() * 1000000)
+                imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(refinedPrompt)}?width=1024&height=1024&nologo=true&seed=${seed}`
+              }
             }
 
             // Sanitasi teks agar bersih tanpa asterisks atau hashtags
@@ -174,7 +211,8 @@ Contoh:
               success: true, 
               answer: cleanedAnswer,
               imageUrl,
-              imagePrompt
+              imagePrompt,
+              generatorEngine
             }))
           } catch (err: any) {
             res.statusCode = 500

@@ -150,14 +150,23 @@ export const AiAssistantModal: React.FC = () => {
 
       if (!error && data) {
         const mapped: ChatMessage[] = data.map((d: any) => {
-          let text = sanitizeAiText(d.content || '')
+          let rawContent = d.content || ''
           let imageUrl: string | undefined = d.image_url || undefined
 
-          // Ekstraksi tag URL gambar jika tersimpan di dalam content
-          const imgMatch = text.match(/\[AI_IMAGE_URL:\s*(https?:\/\/[^\s\]]+)\]/)
+          // 1. Ekstraksi tag URL gambar SEBELUM sanitizeAiText (mencegah underscore terhapus)
+          const imgMatch = rawContent.match(/\[(?:AI_?IMAGE_?URL|IMAGE_?URL|AIIMAGEURL):\s*(https?:\/\/[^\s\]]+)\]/i)
           if (imgMatch) {
-            imageUrl = imgMatch[1]
-            text = text.replace(/\[AI_IMAGE_URL:\s*(https?:\/\/[^\s\]]+)\]/, '').trim()
+            if (!imageUrl) imageUrl = imgMatch[1]
+            rawContent = rawContent.replace(imgMatch[0], '').trim()
+          }
+
+          let text = sanitizeAiText(rawContent)
+
+          // 2. Cek cadangan jika masih ada format sisa yang tersanitasi
+          const fallbackMatch = text.match(/\[(?:AI_?IMAGE_?URL|IMAGE_?URL|AIIMAGEURL):\s*(https?:\/\/[^\s\]]+)\]/i)
+          if (fallbackMatch) {
+            if (!imageUrl) imageUrl = fallbackMatch[1]
+            text = text.replace(fallbackMatch[0], '').trim()
           }
 
           return {
@@ -741,122 +750,135 @@ export const AiAssistantModal: React.FC = () => {
                           </div>
                         )}
 
-                        <div
-                          className={`group relative max-w-[85%] sm:max-w-[78%] rounded-2xl p-4 text-xs leading-relaxed space-y-2 ${
-                            msg.sender === 'user'
-                              ? 'bg-blue-600 text-white rounded-br-xs shadow-md shadow-blue-600/20'
-                              : 'bg-slate-800/90 text-slate-200 border border-slate-750 rounded-bl-xs shadow-sm'
-                          }`}
-                        >
-                          {/* Text Content (Sanitized tanpa markdown asteriks & hashtag) */}
-                          <div className="whitespace-pre-wrap select-text leading-relaxed font-normal">
-                            {msg.text}
-                          </div>
+                        {(() => {
+                          let displayImageUrl = msg.image_url
+                          let displayText = msg.text
 
-                          {/* Tampilan Gambar AI Resolusi Tinggi jika tersedia */}
-                          {msg.image_url && (
-                            <div className="mt-2.5 overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-md">
-                              <div className="relative group/img overflow-hidden flex items-center justify-center bg-slate-950 min-h-[180px] max-h-[380px]">
-                                <img
-                                  src={msg.image_url}
-                                  alt="Gambar Ilustrasi AI HRIS PADI TECH"
-                                  className="w-full h-auto max-h-[380px] object-contain rounded-t-xl transition-transform duration-300 group-hover/img:scale-[1.02] cursor-pointer"
-                                  onClick={() => setPreviewImageUrl(msg.image_url || null)}
-                                  loading="lazy"
-                                />
-                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-2 pointer-events-none">
-                                  <button
-                                    type="button"
-                                    onClick={() => setPreviewImageUrl(msg.image_url || null)}
-                                    className="pointer-events-auto p-2 rounded-lg bg-slate-900/90 hover:bg-slate-800 text-white shadow-md text-xs flex items-center gap-1.5 backdrop-blur transition-all cursor-pointer"
-                                    title="Perbesar Gambar"
-                                  >
-                                    <Maximize2 className="h-3.5 w-3.5" />
-                                    <span>Perbesar</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDownloadImage(msg.image_url!, msg.session_title || 'gambar_ai')}
-                                    className="pointer-events-auto p-2 rounded-lg bg-blue-600/90 hover:bg-blue-600 text-white shadow-md text-xs flex items-center gap-1.5 backdrop-blur transition-all cursor-pointer"
-                                    title="Unduh Gambar HD"
-                                  >
-                                    <Download className="h-3.5 w-3.5" />
-                                    <span>Unduh</span>
-                                  </button>
-                                </div>
+                          const inlineImgMatch = displayText.match(/\[(?:AI_?IMAGE_?URL|IMAGE_?URL|AIIMAGEURL):\s*(https?:\/\/[^\s\]]+)\]/i)
+                          if (inlineImgMatch) {
+                            if (!displayImageUrl) displayImageUrl = inlineImgMatch[1]
+                            displayText = displayText.replace(inlineImgMatch[0], '').trim()
+                          }
+
+                          return (
+                            <div
+                              className={`group relative max-w-[85%] sm:max-w-[78%] rounded-2xl p-4 text-xs leading-relaxed space-y-2 ${
+                                msg.sender === 'user'
+                                  ? 'bg-blue-600 text-white rounded-br-xs shadow-md shadow-blue-600/20'
+                                  : 'bg-slate-800/90 text-slate-200 border border-slate-750 rounded-bl-xs shadow-sm'
+                              }`}
+                            >
+                              {/* Text Content */}
+                              <div className="whitespace-pre-wrap select-text leading-relaxed font-normal">
+                                {displayText}
                               </div>
-                              <div className="px-3 py-1.5 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
-                                <span className="flex items-center gap-1 text-blue-400 font-medium">
-                                  <Sparkles className="h-3 w-3 text-amber-300" />
-                                  Ilustrasi Visual AI (Flux HD Gratis & Unlimited)
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDownloadImage(msg.image_url!, msg.session_title || 'gambar_ai')}
-                                  className="text-slate-400 hover:text-white flex items-center gap-1 transition-colors cursor-pointer"
-                                  title="Simpan ke Perangkat"
-                                >
-                                  <Download className="h-3 w-3" />
-                                  Simpan HD
-                                </button>
+
+                              {/* Tampilan Gambar AI Resolusi Tinggi jika tersedia */}
+                              {displayImageUrl && (
+                                <div className="mt-2.5 overflow-hidden rounded-xl border border-slate-700 bg-slate-950/80 shadow-md">
+                                  <div className="relative group/img overflow-hidden flex items-center justify-center bg-slate-950 min-h-[180px] max-h-[380px]">
+                                    <img
+                                      src={displayImageUrl}
+                                      alt="Gambar Ilustrasi AI HRIS PADI TECH"
+                                      className="w-full h-auto max-h-[380px] object-contain rounded-t-xl transition-transform duration-300 group-hover/img:scale-[1.02] cursor-pointer"
+                                      onClick={() => setPreviewImageUrl(displayImageUrl || null)}
+                                      loading="lazy"
+                                    />
+                                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center gap-2 pointer-events-none">
+                                      <button
+                                        type="button"
+                                        onClick={() => setPreviewImageUrl(displayImageUrl || null)}
+                                        className="pointer-events-auto p-2 rounded-lg bg-slate-900/90 hover:bg-slate-800 text-white shadow-md text-xs flex items-center gap-1.5 backdrop-blur transition-all cursor-pointer"
+                                        title="Perbesar Gambar"
+                                      >
+                                        <Maximize2 className="h-3.5 w-3.5" />
+                                        <span>Perbesar</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDownloadImage(displayImageUrl!, msg.session_title || 'gambar_ai')}
+                                        className="pointer-events-auto p-2 rounded-lg bg-blue-600/90 hover:bg-blue-600 text-white shadow-md text-xs flex items-center gap-1.5 backdrop-blur transition-all cursor-pointer"
+                                        title="Unduh Gambar HD"
+                                      >
+                                        <Download className="h-3.5 w-3.5" />
+                                        <span>Unduh</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="px-3 py-1.5 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
+                                    <span className="flex items-center gap-1 text-blue-400 font-medium">
+                                      <Sparkles className="h-3 w-3 text-amber-300" />
+                                      Ilustrasi Visual AI (Diagram HD Edukasi)
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDownloadImage(displayImageUrl!, msg.session_title || 'gambar_ai')}
+                                      className="text-slate-400 hover:text-white flex items-center gap-1 transition-colors cursor-pointer"
+                                      title="Simpan ke Perangkat"
+                                    >
+                                      <Download className="h-3 w-3" />
+                                      Simpan HD
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Footer Info & Action Buttons */}
+                              <div
+                                className={`flex items-center justify-between pt-1 border-t ${
+                                  msg.sender === 'user'
+                                    ? 'border-white/15 text-blue-200'
+                                    : 'border-slate-700/60 text-slate-400'
+                                }`}
+                              >
+                                <span className="text-[10px]">{msg.timestamp}</span>
+
+                                {msg.sender === 'ai' && (
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCopy(msg.id, displayText)}
+                                      className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                                      title="Salin Teks"
+                                    >
+                                      {copiedId === msg.id ? (
+                                        <Check className="h-3 w-3 text-emerald-400" />
+                                      ) : (
+                                        <Copy className="h-3 w-3" />
+                                      )}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => exportAiContentToPdf(displayText, currentRole, msg.session_title, displayImageUrl)}
+                                      className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-amber-300 transition-colors cursor-pointer"
+                                      title="Cetak PDF Soal/Materi Beserta Gambar"
+                                    >
+                                      <FileDown className="h-3 w-3" />
+                                    </button>
+                                    {displayImageUrl && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDownloadImage(displayImageUrl!, msg.session_title || 'gambar_ai')}
+                                        className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-blue-300 transition-colors cursor-pointer"
+                                        title="Unduh File Gambar HD"
+                                      >
+                                        <Download className="h-3 w-3" />
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteMessage(msg.id)}
+                                      className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-red-400 transition-colors cursor-pointer"
+                                      title="Hapus Pesan Ini"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             </div>
-                          )}
-
-                          {/* Footer Info & Action Buttons */}
-                          <div
-                            className={`flex items-center justify-between pt-1 border-t ${
-                              msg.sender === 'user'
-                                ? 'border-white/15 text-blue-200'
-                                : 'border-slate-700/60 text-slate-400'
-                            }`}
-                          >
-                            <span className="text-[10px]">{msg.timestamp}</span>
-
-                            {msg.sender === 'ai' && (
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopy(msg.id, msg.text)}
-                                  className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
-                                  title="Salin Teks"
-                                >
-                                  {copiedId === msg.id ? (
-                                    <Check className="h-3 w-3 text-emerald-400" />
-                                  ) : (
-                                    <Copy className="h-3 w-3" />
-                                  )}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => exportAiContentToPdf(msg.text, currentRole, msg.session_title, msg.image_url)}
-                                  className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-amber-300 transition-colors cursor-pointer"
-                                  title="Cetak PDF Soal/Materi Beserta Gambar"
-                                >
-                                  <FileDown className="h-3 w-3" />
-                                </button>
-                                {msg.image_url && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDownloadImage(msg.image_url!, msg.session_title || 'gambar_ai')}
-                                    className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-blue-300 transition-colors cursor-pointer"
-                                    title="Unduh File Gambar HD"
-                                  >
-                                    <Download className="h-3 w-3" />
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteMessage(msg.id)}
-                                  className="p-1 rounded-md hover:bg-slate-700 text-slate-400 hover:text-red-400 transition-colors cursor-pointer"
-                                  title="Hapus Pesan Ini"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
+                          )
+                        })()}
 
                         {/* User Avatar */}
                         {msg.sender === 'user' && (
