@@ -513,7 +513,7 @@ export const FormTikTok: React.FC<FormTikTokProps> = ({
                   <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium">
                     <FileSpreadsheet className="h-3 w-3 text-emerald-600" /> Excel/CSV Auto-Aggregate
                   </span>
-                  <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium hidden sm:inline-flex">
+                  <span className="text-[10px] text-muted-foreground items-center gap-1 font-medium hidden sm:inline-flex">
                     <Sparkles className="h-3 w-3 text-pink-500" /> Gemini Vision OCR
                   </span>
                 </div>
