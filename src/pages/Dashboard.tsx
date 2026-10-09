@@ -430,9 +430,11 @@ export const DashboardPage: React.FC = () => {
       <header className="sticky top-0 z-30 w-full border-b bg-white/80 dark:bg-slate-900/80 backdrop-blur">
         <div className="container mx-auto flex h-16 items-center justify-between px-4 sm:px-8">
           <div className="flex items-center space-x-3">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-bold shadow-md shadow-blue-500/20">
-              HP
-            </div>
+            <img
+              src="/logo.png"
+              alt="Logo PADI TECH"
+              className="h-10 w-10 object-contain rounded-xl drop-shadow-sm hover:scale-105 transition-transform"
+            />
             <div>
               <div className="text-base font-bold tracking-tight">HRIS PADI TECH</div>
               <div className="text-xs text-muted-foreground flex items-center gap-1.5">

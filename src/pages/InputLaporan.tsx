@@ -26,9 +26,11 @@ export const InputLaporanPage: React.FC = () => {
       <header className="sticky top-0 z-30 w-full border-b bg-white/90 dark:bg-slate-900/90 backdrop-blur">
         <div className="container mx-auto flex h-14 items-center justify-between px-4 max-w-xl">
           <div className="flex items-center space-x-2.5">
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-bold text-xs shadow">
-              HP
-            </div>
+            <img
+              src="/logo.png"
+              alt="Logo PADI TECH"
+              className="h-8 w-8 object-contain rounded-lg drop-shadow-sm hover:scale-105 transition-transform"
+            />
             <div>
               <div className="text-xs font-bold leading-tight">HRIS PADI TECH</div>
               <div className="text-[10px] text-muted-foreground flex items-center gap-1">

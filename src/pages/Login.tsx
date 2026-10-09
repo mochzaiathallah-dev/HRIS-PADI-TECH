@@ -68,8 +68,13 @@ export const LoginPage: React.FC = () => {
     <div className="min-h-screen flex flex-col justify-center items-center bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 p-4 sm:p-6">
       {/* Brand Header */}
       <div className="w-full max-w-md mb-6 text-center space-y-2">
-        <div className="inline-flex h-12 w-12 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 items-center justify-center text-white font-bold text-xl shadow-lg shadow-blue-500/25">
-          HP
+        <div className="relative inline-flex items-center justify-center mb-1">
+          <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-cyan-500/30 via-emerald-500/20 to-amber-500/30 blur-md scale-110" />
+          <img
+            src="/logo.png"
+            alt="Logo PADI TECH"
+            className="relative h-16 w-16 object-contain rounded-2xl drop-shadow-md hover:scale-105 transition-transform duration-300"
+          />
         </div>
         <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
           HRIS PADI TECH
