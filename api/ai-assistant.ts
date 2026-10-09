@@ -146,7 +146,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey) {
       return res.status(500).json({
-        error: 'API Key AI belum dikonfigurasi di server environment.'
+        error: 'API Key AI belum dikonfigurasi di server environment Vercel.'
       })
     }
 

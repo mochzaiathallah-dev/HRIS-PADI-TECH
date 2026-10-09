@@ -7,12 +7,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed. Use GET or POST.' })
   }
 
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://zusbjxtfwzymjfdbewst.supabase.co'
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp1c2JqeHRmd3p5bWpmZGJld3N0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE0MzQ3NDIsImV4cCI6MjEwNzAxMDc0Mn0.0p1r3qgDqAYTj6Q7p3Q86XqEbeUZVWJ1PGfJfPIWIPY'
 
-  if (!supabaseUrl || !supabaseKey) {
-    return res.status(500).json({ error: 'Supabase configuration missing in environment' })
-  }
 
   try {
     const supabase = createClient(supabaseUrl, supabaseKey, {

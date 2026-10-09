@@ -14,9 +14,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z+]+;base64,/, '')
     const apiKey = process.env.GEMINI_API_KEY
-
     if (!apiKey) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY belum terkonfigurasi di server environment.' })
+      return res.status(500).json({ error: 'GEMINI_API_KEY belum terkonfigurasi di server environment Vercel.' })
     }
 
     const prompt = `Anda adalah asisten AI OCR khusus membaca screenshot rangkuman akhir sesi TikTok Live (End Screen LIVE / Pusat LIVE).

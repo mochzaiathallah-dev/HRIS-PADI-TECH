@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { createClient } from '@supabase/supabase-js'
-import { supabase } from '@/lib/supabase'
+import { supabase, supabaseUrl, supabaseAnonKey } from '@/lib/supabase'
 import { UserRole } from '@/types'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -75,9 +75,6 @@ export const AddEmployeeModal: React.FC<AddEmployeeModalProps> = ({
       const namaClean = values.nama.trim()
 
       // Menggunakan Supabase Auth SignUp resmi (Bebas error skema & 100% kompatibel dengan GoTrue)
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-
       const tempAuthClient = createClient(supabaseUrl, supabaseAnonKey, {
         auth: {
           persistSession: false,
