@@ -31,9 +31,11 @@ import {
   AtSign,
   FileText,
   Download,
-  Calendar
+  Calendar,
+  FileSpreadsheet
 } from 'lucide-react'
 import { DateRangePickerModal } from '@/components/dashboard/DateRangePickerModal'
+import { ImportExcelTiktokModal } from '@/components/dashboard/ImportExcelTiktokModal'
 import { generateTiktokSalesReportPDF } from '@/lib/tiktokPdfExporter'
 
 export const DashboardHostPage: React.FC = () => {
@@ -60,6 +62,7 @@ export const DashboardHostPage: React.FC = () => {
   const [deleteTarget, setDeleteTarget] = useState<LaporanTiktok | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
+  const [isImportExcelOpen, setIsImportExcelOpen] = useState(false)
 
   // Fetch Host Live Reports
   const fetchHostData = useCallback(async () => {
@@ -347,6 +350,17 @@ export const DashboardHostPage: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsImportExcelOpen(true)}
+                    className="h-8 text-xs gap-1 text-emerald-700 border-emerald-200 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400"
+                    title="Impor sesi live dari file Excel (.xlsx) atau CSV TikTok Shop"
+                  >
+                    <FileSpreadsheet className="h-3 w-3 text-emerald-600" />
+                    <span>Impor Excel</span>
+                  </Button>
+
                   <Button
                     variant="outline"
                     size="sm"
@@ -796,6 +810,16 @@ export const DashboardHostPage: React.FC = () => {
         currentAccount={pdfAccount}
         hostName={profile?.nama}
       />
+
+      {/* Import Excel TikTok Modal */}
+      <ImportExcelTiktokModal
+        isOpen={isImportExcelOpen}
+        onClose={() => setIsImportExcelOpen(false)}
+        onSuccess={() => fetchHostData()}
+        hostEmployees={profile ? [profile] : []}
+        defaultHostId={user?.id}
+      />
     </div>
   )
 }
+

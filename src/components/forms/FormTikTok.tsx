@@ -31,8 +31,14 @@ import {
   Sparkles,
   AtSign,
   ScanLine,
-  RefreshCw
+  RefreshCw,
+  FileSpreadsheet
 } from 'lucide-react'
+import { 
+  parseTiktokOrderFile, 
+  batchInsertTiktokSessions, 
+  ParseTiktokResult 
+} from '@/lib/excelTiktokParser'
 
 const DEFAULT_TIKTOK_ACCOUNT = '@wangigaya'
 const SUGGESTED_ACCOUNTS = ['@wangigaya', '@paditech', '@gayahijab']
@@ -67,6 +73,10 @@ export const FormTikTok: React.FC<FormTikTokProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isCompressing, setIsCompressing] = useState(false)
   const [isScanningAI, setIsScanningAI] = useState(false)
+  const [isParsingExcel, setIsParsingExcel] = useState(false)
+  const [isBatchSaving, setIsBatchSaving] = useState(false)
+  const [excelResult, setExcelResult] = useState<ParseTiktokResult | null>(null)
+  const [selectedSessionIdx, setSelectedSessionIdx] = useState<number>(0)
   const [scanNotice, setScanNotice] = useState<string | null>(null)
   const [compressionData, setCompressionData] = useState<CompressionResult | null>(null)
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null)
@@ -216,14 +226,61 @@ export const FormTikTok: React.FC<FormTikTokProps> = ({
     }
   }
 
-  // 3. Client-Side Image Handling & Auto-Scan Trigger
-  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 3. Client-Side Handling (Excel / CSV Spreadsheet OR Image Screenshot)
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    setIsCompressing(true)
     setErrorMessage(null)
     setScanNotice(null)
+    setSubmitSuccess(null)
+
+    const fileNameLower = file.name.toLowerCase()
+    const isSpreadsheet = 
+      fileNameLower.endsWith('.xlsx') || 
+      fileNameLower.endsWith('.xls') || 
+      fileNameLower.endsWith('.csv')
+
+    if (isSpreadsheet) {
+      removeSelectedImage()
+      setIsParsingExcel(true)
+
+      try {
+        const result = await parseTiktokOrderFile(file, currentAccount)
+        if (!result.success || result.liveSessions.length === 0) {
+          throw new Error(result.error || 'Tidak ditemukan sesi live valid di dalam file ini.')
+        }
+
+        setExcelResult(result)
+        setSelectedSessionIdx(0)
+
+        // Otomatis isi kolom form dengan data sesi pertama (terbaru)
+        const firstSession = result.liveSessions[0]
+        setValue('tanggal', firstSession.tanggal, { shouldValidate: true })
+        setValue('gmv_rupiah', firstSession.gmv_rupiah, { shouldValidate: true })
+        setValue('durasi_menit', firstSession.durasi_menit, { shouldValidate: true })
+        setValue('tayangan', firstSession.tayangan, { shouldValidate: true })
+        setValue('impresi', firstSession.impresi, { shouldValidate: true })
+        if (firstSession.akun_tiktok) {
+          setValue('akun_tiktok', firstSession.akun_tiktok, { shouldValidate: true })
+        }
+
+        setScanNotice(
+          `📊 File Excel "${file.name}" berhasil dianalisis! Terdeteksi ${result.liveSessions.length} sesi LIVE (${formatRupiah(result.totalGMVLive)}). Sesi ke-1 otomatis diisikan ke form.`
+        )
+      } catch (err: any) {
+        console.error('Excel parse error:', err)
+        setErrorMessage(err.message || 'Gagal membaca file Excel/CSV.')
+      } finally {
+        setIsParsingExcel(false)
+        e.target.value = ''
+      }
+      return
+    }
+
+    // Jika file gambar screenshot
+    setExcelResult(null)
+    setIsCompressing(true)
 
     try {
       const result = await compressClientImage(file)
@@ -234,9 +291,56 @@ export const FormTikTok: React.FC<FormTikTokProps> = ({
       await triggerAiScan(result.file)
     } catch (err) {
       console.error('Compression error:', err)
-      setErrorMessage('Gagal memproses gambar. Pastikan format file adalah JPG/PNG/WEBP.')
+      setErrorMessage('Gagal memproses gambar. Pastikan format file adalah JPG/PNG/WEBP atau Excel (.xlsx/.csv).')
       setIsCompressing(false)
+    } finally {
+      e.target.value = ''
     }
+  }
+
+  const handleSelectExcelSession = (idx: number) => {
+    if (!excelResult || !excelResult.liveSessions[idx]) return
+    const s = excelResult.liveSessions[idx]
+    setSelectedSessionIdx(idx)
+    setValue('tanggal', s.tanggal, { shouldValidate: true })
+    setValue('gmv_rupiah', s.gmv_rupiah, { shouldValidate: true })
+    setValue('durasi_menit', s.durasi_menit, { shouldValidate: true })
+    setValue('tayangan', s.tayangan, { shouldValidate: true })
+    setValue('impresi', s.impresi, { shouldValidate: true })
+    if (s.akun_tiktok) {
+      setValue('akun_tiktok', s.akun_tiktok, { shouldValidate: true })
+    }
+    setScanNotice(
+      `✨ Sesi #${idx + 1} (${s.tanggal} - ${s.waktu}) berhasil diisikan ke form. GMV: ${formatRupiah(s.gmv_rupiah)}`
+    )
+  }
+
+  const handleBatchSaveAllSessions = async () => {
+    if (!user?.id || !excelResult?.liveSessions.length) return
+    setIsBatchSaving(true)
+    setErrorMessage(null)
+    try {
+      const res = await batchInsertTiktokSessions(user.id, excelResult.liveSessions, currentAccount)
+      if (!res.success) throw new Error(res.error || 'Gagal menyimpan sesi live.')
+
+      setSubmitSuccess(
+        `🎉 Sukses! ${res.insertedCount} sesi live TikTok dari "${excelResult.fileName}" berhasil disimpan ke Supabase! Data langsung sinkron realtime ke dashboard Host & Owner.`
+      )
+      setExcelResult(null)
+      setScanNotice(null)
+      await fetchHistory()
+      if (onReportCreated) onReportCreated()
+    } catch (err: any) {
+      console.error('Batch save error:', err)
+      setErrorMessage(err.message || 'Gagal menyimpan batch sesi live ke Supabase.')
+    } finally {
+      setIsBatchSaving(false)
+    }
+  }
+
+  const removeExcelData = () => {
+    setExcelResult(null)
+    setScanNotice(null)
   }
 
   const removeSelectedImage = () => {
@@ -398,37 +502,160 @@ export const FormTikTok: React.FC<FormTikTokProps> = ({
               </div>
             )}
 
-            {/* SEKSI 1: UPLOAD SCREENSHOT & AUTO-SCAN AI */}
+            {/* SEKSI 1: UPLOAD SCREENSHOT & AUTO-SCAN AI / EXCEL CSV */}
             <div className="space-y-2 p-3.5 rounded-xl border border-pink-200 dark:border-pink-900/50 bg-gradient-to-b from-pink-50/40 to-slate-50/40 dark:from-pink-950/20 dark:to-slate-900/20">
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-bold text-pink-700 dark:text-pink-300 flex items-center gap-1.5">
                   <ScanLine className="h-4 w-4 text-pink-600" />
-                  Foto Bukti Screenshot End-Live (Auto-Fill AI)
+                  Bukti Screenshot atau Ekspor Excel / CSV TikTok
                 </Label>
-                <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium">
-                  <Sparkles className="h-3 w-3 text-pink-500" /> Gemini Vision OCR
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium">
+                    <FileSpreadsheet className="h-3 w-3 text-emerald-600" /> Excel/CSV Auto-Aggregate
+                  </span>
+                  <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium hidden sm:inline-flex">
+                    <Sparkles className="h-3 w-3 text-pink-500" /> Gemini Vision OCR
+                  </span>
+                </div>
               </div>
 
-              {!compressionData ? (
+              {excelResult ? (
+                <div className="rounded-xl border border-emerald-300 dark:border-emerald-800 p-3.5 bg-emerald-50/40 dark:bg-emerald-950/20 space-y-3 shadow-xs animate-in fade-in">
+                  <div className="flex items-center justify-between border-b border-emerald-200 dark:border-emerald-800/80 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="h-8 w-8 rounded-lg bg-emerald-100 dark:bg-emerald-900 flex items-center justify-center text-emerald-700 dark:text-emerald-300 shrink-0">
+                        <FileSpreadsheet className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-emerald-900 dark:text-emerald-100 flex items-center gap-1.5">
+                          <span className="truncate max-w-[200px] sm:max-w-xs">{excelResult.fileName}</span>
+                          <Badge variant="outline" className="text-[9px] bg-emerald-100/60 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-300">
+                            Excel/CSV Terbaca
+                          </Badge>
+                        </div>
+                        <p className="text-[10px] text-emerald-700 dark:text-emerald-400">
+                          {excelResult.totalRows} pesanan teragregasi menjadi {excelResult.liveSessions.length} sesi LIVE
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={removeExcelData}
+                      title="Hapus data file Excel"
+                      className="p-1 rounded-full text-slate-400 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {/* Ringkasan Metrik Excel */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
+                      <span className="text-[10px] text-muted-foreground block">Total GMV Live</span>
+                      <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                        {formatRupiah(excelResult.totalGMVLive)}
+                      </span>
+                    </div>
+                    <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
+                      <span className="text-[10px] text-muted-foreground block">Sesi Terdeteksi</span>
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                        {excelResult.liveSessions.length} Sesi
+                      </span>
+                    </div>
+                    <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
+                      <span className="text-[10px] text-muted-foreground block">Produk Terjual</span>
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                        {excelResult.liveSessions.reduce((acc, s) => acc + s.produk_terjual, 0)} Pcs
+                      </span>
+                    </div>
+                    <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
+                      <span className="text-[10px] text-muted-foreground block">Total Pesanan</span>
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                        {excelResult.totalOrders} Order
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Pemilih Sesi Spesifik untuk Auto-fill ke Form */}
+                  <div className="space-y-1.5 bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-lg border border-emerald-100 dark:border-emerald-900/50">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                        Pratinjau Sesi Terpilih (Masuk ke Kolom Form):
+                      </span>
+                      <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
+                        Sesi {selectedSessionIdx + 1} dari {excelResult.liveSessions.length}
+                      </span>
+                    </div>
+
+                    <select
+                      value={selectedSessionIdx}
+                      onChange={(e) => handleSelectExcelSession(Number(e.target.value))}
+                      className="w-full text-xs h-8 px-2 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    >
+                      {excelResult.liveSessions.map((session, idx) => (
+                        <option key={session.contentId || idx} value={idx}>
+                          Sesi #{idx + 1} ({session.tanggal} {session.waktu}) - {formatRupiah(session.gmv_rupiah)} ({session.produk_terjual} pcs, {session.orderCount} pesanan)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Tombol Aksi Simpan Batch Realtime */}
+                  <div className="flex flex-col sm:flex-row items-center gap-2 pt-1">
+                    <Button
+                      type="button"
+                      disabled={isBatchSaving || isSubmitting}
+                      onClick={handleBatchSaveAllSessions}
+                      className="w-full sm:flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-md shadow-emerald-600/20 gap-1.5 h-9"
+                    >
+                      {isBatchSaving ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Menyimpan {excelResult.liveSessions.length} Sesi ke Supabase...
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="h-3.5 w-3.5" />
+                          Simpan Semua {excelResult.liveSessions.length} Sesi ke Supabase (Sinkron Realtime)
+                        </>
+                      )}
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={removeExcelData}
+                      className="w-full sm:w-auto text-xs h-9 text-slate-600 border-slate-200 dark:border-slate-700"
+                    >
+                      Tutup File
+                    </Button>
+                  </div>
+                </div>
+              ) : !compressionData ? (
                 <div className="relative border-2 border-dashed border-pink-300 dark:border-pink-800 hover:border-pink-500 rounded-xl p-4 text-center transition-all bg-white/70 dark:bg-slate-900/70 hover:bg-pink-50/20 cursor-pointer">
                   <input
                     type="file"
-                    accept="image/*"
-                    onChange={handleImageSelect}
-                    disabled={isSubmitting || isCompressing || isScanningAI}
+                    accept="image/*,.xlsx,.xls,.csv"
+                    onChange={handleFileSelect}
+                    disabled={isSubmitting || isCompressing || isScanningAI || isParsingExcel || isBatchSaving}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed z-10"
                   />
-                  {isCompressing || isScanningAI ? (
+                  {isCompressing || isScanningAI || isParsingExcel ? (
                     <div className="py-2.5 flex flex-col items-center space-y-2">
                       <Loader2 className="h-6 w-6 text-pink-600 animate-spin" />
                       <p className="text-xs font-semibold text-pink-600 dark:text-pink-400 animate-pulse">
-                        {isCompressing 
+                        {isParsingExcel
+                          ? '📊 Mengekstrak & mengagregasi data sesi dari file Excel/CSV...'
+                          : isCompressing 
                           ? 'Mengompres gambar di browser...' 
                           : '🤖 AI sedang memindai metrik live dari screenshot...'}
                       </p>
                       <p className="text-[10px] text-muted-foreground">
-                        Mengekstrak Durasi, GMV, Tayangan & Impresi secara otomatis
+                        {isParsingExcel
+                          ? 'Mengelompokkan per ID Konten, menghitung GMV, durasi & produk terjual'
+                          : 'Mengekstrak Durasi, GMV, Tayangan & Impresi secara otomatis'}
                       </p>
                     </div>
                   ) : (
@@ -437,13 +664,13 @@ export const FormTikTok: React.FC<FormTikTokProps> = ({
                         <UploadCloud className="h-5 w-5" />
                       </div>
                       <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                        Klik atau seret Screenshot Rangkuman Sesi Live ke sini
+                        Klik atau seret Screenshot Live atau File Excel / CSV TikTok ke sini
                       </div>
                       <p className="text-[11px] text-pink-600 dark:text-pink-400 font-medium">
-                        ✨ Sistem otomatis membaca GMV, Durasi, dan Impresi langsung ke kolom form!
+                        ✨ Sistem otomatis membaca GMV, Durasi, Tanggal, dan metrik langsung ke kolom form!
                       </p>
                       <p className="text-[10px] text-muted-foreground">
-                        Mendukung screenshot "Selamat! Anda berhasil menyelesaikan LIVE lagi!" dari aplikasi TikTok.
+                        Mendukung screenshot end-live TikTok & file ekspor pesanan TikTok Shop (.xlsx / .csv).
                       </p>
                     </div>
                   )}

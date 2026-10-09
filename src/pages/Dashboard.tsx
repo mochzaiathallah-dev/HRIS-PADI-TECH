@@ -10,6 +10,7 @@ import { EditEmployeeModal } from '@/components/dashboard/EditEmployeeModal'
 import { ResetPasswordModal } from '@/components/dashboard/ResetPasswordModal'
 import { EditBimbelModal } from '@/components/dashboard/EditBimbelModal'
 import { EditTikTokModal } from '@/components/dashboard/EditTikTokModal'
+import { ImportExcelTiktokModal } from '@/components/dashboard/ImportExcelTiktokModal'
 import { AddMuridModal } from '@/components/dashboard/AddMuridModal'
 import { EditMuridModal } from '@/components/dashboard/EditMuridModal'
 import { DeleteConfirmModal } from '@/components/dashboard/DeleteConfirmModal'
@@ -56,7 +57,8 @@ import {
   Trash2,
   BookOpen,
   Plus,
-  Mail
+  Mail,
+  FileSpreadsheet
 } from 'lucide-react'
 
 const CHART_COLORS = ['#3b82f6', '#ec4899', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4']
@@ -87,6 +89,7 @@ export const DashboardPage: React.FC = () => {
   // Modal States - Bimbel & TikTok
   const [editBimbelTarget, setEditBimbelTarget] = useState<LaporanBimbel | null>(null)
   const [editTiktokTarget, setEditTiktokTarget] = useState<LaporanTiktok | null>(null)
+  const [isImportExcelOpen, setIsImportExcelOpen] = useState(false)
 
   // Modal States - Murid
   const [isAddMuridOpen, setIsAddMuridOpen] = useState(false)
@@ -994,6 +997,17 @@ export const DashboardPage: React.FC = () => {
                 <Button
                   variant="outline"
                   size="sm"
+                  onClick={() => setIsImportExcelOpen(true)}
+                  className="text-xs gap-1.5 text-emerald-700 border-emerald-200 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400"
+                  title="Impor data sesi live dari file Excel (.xlsx) atau CSV TikTok Shop"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
+                  <span>Impor Excel / CSV</span>
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => exportTikTokToCSV(filteredTiktok)}
                   className="text-xs gap-1.5"
                 >
@@ -1428,6 +1442,14 @@ export const DashboardPage: React.FC = () => {
         onClose={() => setEditTiktokTarget(null)}
         onSuccess={() => fetchData()}
         laporan={editTiktokTarget}
+      />
+
+      {/* Import Excel TikTok Modal */}
+      <ImportExcelTiktokModal
+        isOpen={isImportExcelOpen}
+        onClose={() => setIsImportExcelOpen(false)}
+        onSuccess={() => fetchData()}
+        hostEmployees={employeeList.filter(e => e.role === 'host')}
       />
 
       {/* Add Murid Modal */}
