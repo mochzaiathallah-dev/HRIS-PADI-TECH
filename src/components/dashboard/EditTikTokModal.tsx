@@ -79,18 +79,40 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
     setSuccessMessage(null)
 
     try {
-      const { error } = await supabase
-        .from('laporan_tiktok')
-        .update({
-          tanggal: values.tanggal,
-          durasi_menit: values.durasi_menit,
-          gmv_rupiah: values.gmv_rupiah,
-          tayangan: values.tayangan,
-          impresi: values.impresi,
-        })
-        .eq('id', laporan.id)
+      let isUpdated = false
 
-      if (error) throw error
+      // 1. Coba via RPC Security Definer terlebih dahulu
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('host_update_laporan_tiktok', {
+          p_id: laporan.id,
+          p_tanggal: values.tanggal,
+          p_durasi_menit: values.durasi_menit,
+          p_tayangan: values.tayangan,
+          p_impresi: values.impresi,
+          p_gmv_rupiah: values.gmv_rupiah,
+        })
+        if (!rpcErr && rpcRes && rpcRes.success) {
+          isUpdated = true
+        }
+      } catch (e) {
+        console.warn('RPC update tiktok fallback to direct update:', e)
+      }
+
+      // 2. Fallback direct update
+      if (!isUpdated) {
+        const { error } = await supabase
+          .from('laporan_tiktok')
+          .update({
+            tanggal: values.tanggal,
+            durasi_menit: values.durasi_menit,
+            gmv_rupiah: values.gmv_rupiah,
+            tayangan: values.tayangan,
+            impresi: values.impresi,
+          })
+          .eq('id', laporan.id)
+
+        if (error) throw error
+      }
 
       setSuccessMessage('Data laporan TikTok Live berhasil diperbarui!')
       setTimeout(() => {

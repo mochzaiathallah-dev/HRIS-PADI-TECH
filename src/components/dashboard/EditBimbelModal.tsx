@@ -178,19 +178,42 @@ export const EditBimbelModal: React.FC<EditBimbelModalProps> = ({
       const allFinalPhotos = [...existingPhotoUrls, ...uploadedNewUrls]
       const serializedPhotoUrls = serializePhotoUrls(allFinalPhotos)
 
-      const { error } = await supabase
-        .from('laporan_bimbel')
-        .update({
-          tanggal: values.tanggal,
-          murid_id: values.murid_id,
-          mata_pelajaran: values.mata_pelajaran.trim(),
-          topik: values.topik.trim(),
-          ringkasan: values.ringkasan.trim(),
-          foto_kegiatan_url: serializedPhotoUrls,
-        })
-        .eq('id', laporan.id)
+      let isUpdated = false
 
-      if (error) throw error
+      // 1. Coba via RPC Security Definer terlebih dahulu
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('tutor_update_laporan_bimbel', {
+          p_id: laporan.id,
+          p_tanggal: values.tanggal,
+          p_murid_id: values.murid_id,
+          p_mata_pelajaran: values.mata_pelajaran.trim(),
+          p_topik: values.topik.trim(),
+          p_ringkasan: values.ringkasan.trim(),
+          p_foto_kegiatan_url: serializedPhotoUrls,
+        })
+        if (!rpcErr && rpcRes && rpcRes.success) {
+          isUpdated = true
+        }
+      } catch (e) {
+        console.warn('RPC update bimbel fallback to direct update:', e)
+      }
+
+      // 2. Jika RPC belum terpasang atau gagal, fallback ke direct update
+      if (!isUpdated) {
+        const { error } = await supabase
+          .from('laporan_bimbel')
+          .update({
+            tanggal: values.tanggal,
+            murid_id: values.murid_id,
+            mata_pelajaran: values.mata_pelajaran.trim(),
+            topik: values.topik.trim(),
+            ringkasan: values.ringkasan.trim(),
+            foto_kegiatan_url: serializedPhotoUrls,
+          })
+          .eq('id', laporan.id)
+
+        if (error) throw error
+      }
 
       setSuccessMessage('Laporan sesi bimbel & dokumentasi berhasil diperbarui!')
       setTimeout(() => {

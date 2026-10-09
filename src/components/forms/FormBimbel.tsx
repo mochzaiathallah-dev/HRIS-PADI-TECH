@@ -208,19 +208,22 @@ export const FormBimbel: React.FC<FormBimbelProps> = ({
     fetchHistory()
   }, [fetchMurid, fetchHistory])
 
-  // Realtime subscription untuk sinkronisasi murid di frontend tutor
+  // Realtime subscription untuk sinkronisasi murid dan riwayat laporan di frontend tutor
   useEffect(() => {
     const channel = supabase
-      .channel('realtime_form_bimbel_murid_sync')
+      .channel('realtime_form_bimbel_sync')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'murid' }, () => {
         fetchMurid()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'laporan_bimbel' }, () => {
+        fetchHistory()
       })
       .subscribe()
 
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [fetchMurid])
+  }, [fetchMurid, fetchHistory])
 
   // 3. Client-Side Image Selection & Compression (Mendukung Lebih dari 1 Foto, Auto WebP)
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -739,7 +742,7 @@ ${report.ringkasan}${photoSection}`
                     </div>
 
                     {/* Aksi Cepat: Edit, Delete, WA */}
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 shrink-0">
                       <button
                         type="button"
                         onClick={() =>
@@ -754,9 +757,9 @@ ${report.ringkasan}${photoSection}`
                           })
                         }
                         title="Bagikan ke WhatsApp"
-                        className="p-1.5 rounded-md text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50"
+                        className="p-1.5 sm:p-2 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 cursor-pointer active:scale-95 transition-all"
                       >
-                        <Share2 className="h-3.5 w-3.5" />
+                        <Share2 className="h-4 w-4" />
                       </button>
 
                       {onEditReport && (
@@ -764,9 +767,9 @@ ${report.ringkasan}${photoSection}`
                           type="button"
                           onClick={() => onEditReport(item)}
                           title="Edit Laporan"
-                          className="p-1.5 rounded-md text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50"
+                          className="p-1.5 sm:p-2 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 cursor-pointer active:scale-95 transition-all"
                         >
-                          <Edit className="h-3.5 w-3.5" />
+                          <Edit className="h-4 w-4" />
                         </button>
                       )}
 
@@ -775,9 +778,9 @@ ${report.ringkasan}${photoSection}`
                           type="button"
                           onClick={() => onDeleteReport(item)}
                           title="Hapus Laporan"
-                          className="p-1.5 rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50"
+                          className="p-1.5 sm:p-2 rounded-lg text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 cursor-pointer active:scale-95 transition-all"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <Trash2 className="h-4 w-4" />
                         </button>
                       )}
                     </div>

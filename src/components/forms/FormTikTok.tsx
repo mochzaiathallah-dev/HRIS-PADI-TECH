@@ -25,7 +25,9 @@ import {
   AlertCircle, 
   X, 
   History,
-  Zap
+  Zap,
+  Edit,
+  Trash2
 } from 'lucide-react'
 
 const tiktokSchema = z.object({
@@ -40,7 +42,17 @@ type TikTokFormValues = z.infer<typeof tiktokSchema>
 
 const QUICK_DURATIONS = [30, 60, 90, 120, 180]
 
-export const FormTikTok: React.FC = () => {
+interface FormTikTokProps {
+  onReportCreated?: () => void
+  onEditReport?: (report: LaporanTiktok) => void
+  onDeleteReport?: (report: LaporanTiktok) => void
+}
+
+export const FormTikTok: React.FC<FormTikTokProps> = ({
+  onReportCreated,
+  onEditReport,
+  onDeleteReport,
+}) => {
   const { user } = useAuth()
   const [historyList, setHistoryList] = useState<LaporanTiktok[]>([])
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
@@ -96,7 +108,28 @@ export const FormTikTok: React.FC = () => {
 
   useEffect(() => {
     fetchHistory()
-  }, [fetchHistory])
+    if (!user?.id) return
+
+    const channel = supabase
+      .channel(`realtime_form_tiktok_${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'laporan_tiktok',
+          filter: `host_id=eq.${user.id}`,
+        },
+        () => {
+          fetchHistory()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [user?.id, fetchHistory])
 
   // 2. Client-Side Image Handling & Compression
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -193,6 +226,7 @@ export const FormTikTok: React.FC = () => {
         impresi: 0,
       })
       await fetchHistory()
+      if (onReportCreated) onReportCreated()
     } catch (err: any) {
       console.error('Gagal submit laporan tiktok:', err)
       setErrorMessage(err.message || 'Gagal menyimpan laporan TikTok. Periksa koneksi atau hak akses database.')
@@ -487,7 +521,33 @@ export const FormTikTok: React.FC = () => {
                     <span className="text-pink-600 dark:text-pink-400 font-bold text-sm">
                       {formatRupiah(Number(item.gmv_rupiah))}
                     </span>
-                    <span className="text-slate-500 font-normal">{item.tanggal}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-slate-500 font-normal">{item.tanggal}</span>
+                      {(onEditReport || onDeleteReport) && (
+                        <div className="flex items-center gap-1 ml-2">
+                          {onEditReport && (
+                            <button
+                              type="button"
+                              onClick={() => onEditReport(item)}
+                              title="Edit Laporan"
+                              className="p-1 sm:p-1.5 rounded-md text-slate-500 hover:text-pink-600 hover:bg-pink-50 dark:hover:bg-pink-950/50 cursor-pointer active:scale-95 transition-all"
+                            >
+                              <Edit className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {onDeleteReport && (
+                            <button
+                              type="button"
+                              onClick={() => onDeleteReport(item)}
+                              title="Hapus Laporan"
+                              className="p-1 sm:p-1.5 rounded-md text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 cursor-pointer active:scale-95 transition-all"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-slate-600 dark:text-slate-400 border-t pt-1.5 border-slate-100 dark:border-slate-800">
                     <span>Durasi: {item.durasi_menit} Menit</span>

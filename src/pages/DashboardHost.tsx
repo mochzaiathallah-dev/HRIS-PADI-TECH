@@ -103,17 +103,34 @@ export const DashboardHostPage: React.FC = () => {
     }
   }, [user?.id, fetchHostData])
 
-  // Delete Handler
+  // Delete Handler (Mendukung RPC fail-safe & Direct Delete)
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return
     setIsDeleting(true)
     try {
-      const { error } = await supabase
-        .from('laporan_tiktok')
-        .delete()
-        .eq('id', deleteTarget.id)
+      let isDeleted = false
 
-      if (error) throw error
+      // 1. Coba via RPC Security Definer terlebih dahulu
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('host_delete_laporan_tiktok', {
+          p_id: deleteTarget.id,
+        })
+        if (!rpcErr && rpcRes && rpcRes.success) {
+          isDeleted = true
+        }
+      } catch (e) {
+        console.warn('RPC delete tiktok fallback to direct query:', e)
+      }
+
+      // 2. Fallback direct delete
+      if (!isDeleted) {
+        const { error: delErr } = await supabase
+          .from('laporan_tiktok')
+          .delete()
+          .eq('id', deleteTarget.id)
+
+        if (delErr) throw delErr
+      }
 
       setDeleteTarget(null)
       await fetchHostData()
@@ -227,11 +244,11 @@ export const DashboardHostPage: React.FC = () => {
         </div>
 
         {/* Tab Switcher */}
-        <div className="flex items-center gap-2 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-800/70 w-fit">
+        <div className="grid grid-cols-2 sm:flex items-center gap-1.5 sm:gap-2 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-800/70 w-full sm:w-fit">
           <button
             type="button"
             onClick={() => setActiveTab('input')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center justify-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
               activeTab === 'input'
                 ? 'bg-white dark:bg-slate-900 text-pink-600 dark:text-pink-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
@@ -243,7 +260,7 @@ export const DashboardHostPage: React.FC = () => {
           <button
             type="button"
             onClick={() => setActiveTab('manage')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center justify-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
               activeTab === 'manage'
                 ? 'bg-white dark:bg-slate-900 text-pink-600 dark:text-pink-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
@@ -257,7 +274,11 @@ export const DashboardHostPage: React.FC = () => {
         {/* TAB 1: FORM INPUT */}
         {activeTab === 'input' && (
           <div className="space-y-4">
-            <FormTikTok />
+            <FormTikTok
+              onReportCreated={fetchHostData}
+              onEditReport={(rep) => setEditTarget(rep)}
+              onDeleteReport={(rep) => setDeleteTarget(rep)}
+            />
           </div>
         )}
 

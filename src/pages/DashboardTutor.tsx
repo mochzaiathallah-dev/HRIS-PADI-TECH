@@ -173,17 +173,34 @@ export const DashboardTutorPage: React.FC = () => {
     }
   }, [user?.id, fetchTutorData])
 
-  // Delete Handler
+  // Delete Handler (Mendukung RPC fail-safe & Direct Delete)
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return
     setIsDeleting(true)
     try {
-      const { error } = await supabase
-        .from('laporan_bimbel')
-        .delete()
-        .eq('id', deleteTarget.id)
+      let isSuccess = false
 
-      if (error) throw error
+      // 1. Coba via RPC Security Definer terlebih dahulu (bypass RLS dengan validasi kepemilikan)
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('tutor_delete_laporan_bimbel', {
+          p_id: deleteTarget.id,
+        })
+        if (!rpcErr && rpcRes && rpcRes.success) {
+          isSuccess = true
+        }
+      } catch (e) {
+        console.warn('RPC delete fallback to direct query:', e)
+      }
+
+      // 2. Jika belum berhasil lewat RPC, lakukan direct delete
+      if (!isSuccess) {
+        const { error: delErr } = await supabase
+          .from('laporan_bimbel')
+          .delete()
+          .eq('id', deleteTarget.id)
+
+        if (delErr) throw delErr
+      }
 
       setDeleteTarget(null)
       await fetchTutorData()
@@ -295,11 +312,11 @@ ${item.ringkasan}${photoSection}`
           </div>
 
           {/* Action Buttons: Tambah Murid & PDF Export */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-2 sm:flex items-center gap-2 w-full sm:w-auto">
             <Button
               type="button"
               onClick={() => setIsAddMuridOpen(true)}
-              className="bg-emerald-500/25 hover:bg-emerald-500/35 text-white border border-emerald-300/40 text-xs h-9 gap-1.5 backdrop-blur shadow-xs"
+              className="bg-emerald-500/25 hover:bg-emerald-500/35 text-white border border-emerald-300/40 text-xs h-9 gap-1.5 backdrop-blur shadow-xs cursor-pointer w-full sm:w-auto justify-center"
               title="Input data murid / siswa baru"
             >
               <UserPlus className="h-3.5 w-3.5 text-emerald-300" />
@@ -308,20 +325,20 @@ ${item.ringkasan}${photoSection}`
             <Button
               type="button"
               onClick={() => setIsPdfModalOpen(true)}
-              className="bg-white/15 hover:bg-white/25 text-white border border-white/30 text-xs h-9 gap-1.5 backdrop-blur shadow-xs"
+              className="bg-white/15 hover:bg-white/25 text-white border border-white/30 text-xs h-9 gap-1.5 backdrop-blur shadow-xs cursor-pointer w-full sm:w-auto justify-center"
             >
               <FileDown className="h-3.5 w-3.5 text-amber-300" />
-              <span>Ekspor PDF Raport Siswa</span>
+              <span>Ekspor PDF Raport</span>
             </Button>
           </div>
         </div>
 
         {/* Tab Switcher */}
-        <div className="flex items-center gap-2 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-800/70 w-fit">
+        <div className="grid grid-cols-2 sm:flex items-center gap-1.5 sm:gap-2 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-800/70 w-full sm:w-fit">
           <button
             type="button"
             onClick={() => setActiveTab('input')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center justify-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
               activeTab === 'input'
                 ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
@@ -333,7 +350,7 @@ ${item.ringkasan}${photoSection}`
           <button
             type="button"
             onClick={() => setActiveTab('manage')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center justify-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
               activeTab === 'manage'
                 ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'

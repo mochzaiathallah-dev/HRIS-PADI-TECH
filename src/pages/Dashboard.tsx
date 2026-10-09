@@ -481,43 +481,43 @@ export const DashboardPage: React.FC = () => {
         )}
 
         {/* Top Control Bar: Filters & Quick Actions */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
-          <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 p-3.5 sm:p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full md:w-auto">
             <div className="flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-400">
-              <Clock className="h-3.5 w-3.5" />
+              <Clock className="h-3.5 w-3.5 shrink-0" />
               <span>Periode:</span>
               <Input
                 type="month"
                 value={selectedMonth}
                 onChange={(e) => setSelectedMonth(e.target.value)}
-                className="h-8 w-36 text-xs"
+                className="h-8 flex-1 sm:w-36 text-xs"
               />
               {selectedMonth && (
                 <button
                   onClick={() => setSelectedMonth('')}
-                  className="text-[11px] text-blue-600 hover:underline"
+                  className="text-[11px] text-blue-600 hover:underline shrink-0"
                 >
                   Reset
                 </button>
               )}
             </div>
 
-            <div className="relative">
+            <div className="relative flex-1 sm:flex-none">
               <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
                 placeholder="Cari data, murid, tutor, host..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-8 pl-8 text-xs w-48 sm:w-64"
+                className="h-8 pl-8 text-xs w-full sm:w-64"
               />
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full md:w-auto">
             <Button
               size="sm"
               onClick={() => setIsAddEmployeeOpen(true)}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 text-xs shadow-md shadow-indigo-500/20"
+              className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 text-xs shadow-md shadow-indigo-500/20 cursor-pointer justify-center h-9 sm:h-8"
             >
               <UserPlus className="h-4 w-4" />
               <span>+ Daftarkan Karyawan</span>
@@ -528,7 +528,7 @@ export const DashboardPage: React.FC = () => {
                 setPreselectedMuridId(undefined)
                 setIsPdfModalOpen(true)
               }}
-              className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 text-xs shadow-md shadow-blue-500/20"
+              className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 text-xs shadow-md shadow-blue-500/20 cursor-pointer justify-center h-9 sm:h-8"
             >
               <FileDown className="h-4 w-4" />
               <span>Generate PDF Siswa</span>

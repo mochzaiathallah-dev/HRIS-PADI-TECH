@@ -55,14 +55,12 @@ ATURAN FORMAT JAWABAN (WAJIB DIIKUTI):
 5. Gunakan penomoran biasa (1., 2., 3.) untuk daftar poin.
 6. Jawab secara lengkap, mendalam, tuntas sampai selesai, dan JANGAN terpotong di tengah kalimat.
 
-FITUR PEMBUATAN GAMBAR AI (GRATIS & UNLIMITED):
-Jika pengguna meminta membuat gambar, diagram, ilustrasi, foto, atau visualisasi materi (misalnya: 'buatkan gambar...', 'gambar...', 'ilustrasikan...', 'visualisasikan...', 'generate image', atau materi visual lainnya):
-- Anda SANGAT BISA dan MAMPU membuatkan gambar visual melalui AI generator terintegrasi. JANGAN PERNAH menolak dengan alasan 'saya berbasis teks dan tidak bisa mengirim gambar fisik'.
-- Berikan penjelasan materi/topik yang diminta dengan ramah dan edukatif.
-- Di BARIS PALING AKHIR jawaban Anda, sertakan instruksi prompt gambar berbahasa Inggris yang sangat deskriptif dan detail untuk model visual AI dengan format tepat:
-[IMAGE_PROMPT: detailed high-quality English description of the image, clear lighting, educational scientific or professional illustration, 8k resolution]
-Contoh:
-[IMAGE_PROMPT: educational detailed medical illustration of human internal anatomy organs front view, clear diagram, bright lighting, high resolution, 8k]`
+ATURAN PEMBUATAN GAMBAR (SANGAT KETAT):
+- HANYA DAN HANYA JIKA pengguna secara spesifik meminta gambar, foto, atau diagram (misalnya ada kata 'buatkan gambar', 'gambarkan', 'bikinkan gambar', 'lukiskan', 'ilustrasikan', 'diagram'):
+  Berikan penjelasan materi edukatif terlebih dahulu, lalu di BARIS PALING AKHIR jawaban sertakan instruksi prompt gambar:
+  [IMAGE_PROMPT: detailed high-quality English description of the image, educational clean illustration, 8k resolution]
+- JIKA pengguna HANYA bertanya materi, teks biasa, surah/ayat, tafsir, rumus, soal latihan, atau TIDAK meminta gambar secara eksplisit:
+  DILARANG KERAS membuat gambar, DILARANG menawarkan ilustrasi visual, DILARANG menulis pengantar visual ('berikut adalah ilustrasi visual...'), dan DILARANG menyertakan tag [IMAGE_PROMPT: ...]. Jawab teks pertanyaan pengguna sampai tuntas tanpa embel-embel gambar!`
 
             const SYSTEM_PROMPTS: Record<string, string> = {
               tutor: `Anda adalah Asisten AI Cerdas untuk Tutor Bimbingan Belajar di HRIS PADI TECH. Tugas Anda: membuat soal latihan & kunci jawaban (SD-SMA), menjelaskan materi yang rumit secara sederhana, memberikan ide ice-breaking, merumuskan catatan evaluasi siswa, dan menghasilkan ilustrasi visual materi pembelajaran.\n${NO_MARKDOWN_INSTRUCTION}`,
@@ -139,20 +137,28 @@ Contoh:
               answer = answer.replace(/\[IMAGE_PROMPT:\s*([^\]]+)\]/i, '').trim()
             }
 
-            // 2. Deteksi apakah permintaan adalah pembuatan gambar
-            const isImageRequest = 
-              makeImage ||
-              /\b(buatkan\s+gambar|buat\s+gambar|gambarin|bikin\s+gambar|lukiskan|ilustrasikan|visualisasikan|generate\s+image|foto|diagram|anatomi|reproduksi|organ)\b/i.test(prompt)
+            // 2. Deteksi apakah permintaan adalah pembuatan gambar secara eksplisit
+            const isImageExplicitlyRequested = 
+              Boolean(makeImage) ||
+              /\b(buatkan\s+gambar|buat\s+gambar|gambarin|bikin\s+gambar|lukiskan|ilustrasikan|visualisasikan|generate\s+image|minta\s+gambar|tolong\s+gambar|bikinin\s+gambar|desainkan\s+gambar)\b/i.test(prompt)
 
-            if (!imagePrompt && isImageRequest) {
-              const cleanPromptForImage = prompt
-                .replace(/^(tolong\s+)?(buatkan\s+|bikin\s+|bikinin\s+)?(gambar\s+|ilustrasi\s+|foto\s+|diagram\s+)/i, '')
+            if (!isImageExplicitlyRequested) {
+              imagePrompt = null
+              imageUrl = null
+              answer = answer
+                .replace(/\[IMAGE_PROMPT:\s*([^\]]+)\]/gi, '')
+                .replace(/(?:Untuk\s+membantu\s+visualisasi[^\n]*\n?)/gi, '')
+                .replace(/(?:Berikut\s+(?:adalah\s+)?ilustrasi\s+visual[^\n]*\n?)/gi, '')
                 .trim()
-              imagePrompt = `clean 2D scientific medical textbook diagram of ${cleanPromptForImage || prompt}, white clean background, educational vector illustration, sharp clear lines, labeled diagram`
-            }
+            } else {
+              if (!imagePrompt) {
+                const cleanPromptForImage = prompt
+                  .replace(/^(tolong\s+)?(buatkan\s+|bikin\s+|bikinin\s+)?(gambar\s+|ilustrasi\s+|foto\s+|diagram\s+)/i, '')
+                  .trim()
+                imagePrompt = `clean 2D scientific medical textbook diagram of ${cleanPromptForImage || prompt}, white clean background, educational vector illustration, sharp clear lines, labeled diagram`
+              }
 
-            // 3. Eksekusi Pembuatan Gambar: Coba Google Nano Banana Pro lalu fallback ke Visual Engine
-            if (imagePrompt) {
+              // 3. Eksekusi Pembuatan Gambar: Coba Google Nano Banana Pro lalu fallback ke Visual Engine
               const BANANA_MODELS = ['gemini-3-pro-image', 'gemini-2.5-flash-image', 'gemini-3.1-flash-image']
               let bananaFound = false
 

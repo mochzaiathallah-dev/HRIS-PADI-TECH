@@ -121,4 +121,267 @@ BEGIN
         WHEN duplicate_object THEN null;
         WHEN others THEN null;
     END;
+
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.laporan_bimbel;
+    EXCEPTION
+        WHEN duplicate_object THEN null;
+        WHEN others THEN null;
+    END;
+
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.laporan_tiktok;
+    EXCEPTION
+        WHEN duplicate_object THEN null;
+        WHEN others THEN null;
+    END;
 END $$;
+
+-- ==============================================================================
+-- 5. PERBAIKAN TOTAL RLS & FUNGSI RPC CRUD LAPORAN BIMBEL & TIKTOK
+-- ==============================================================================
+
+-- A. PERBAIKI RLS LAPORAN BIMBEL (TUTOR DAPAT FULL CRUD LAPORAN SENDIRI, OWNER BISA SEMUA)
+ALTER TABLE public.laporan_bimbel ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Owner can update or delete bimbel reports" ON public.laporan_bimbel;
+DROP POLICY IF EXISTS "Tutor and Owner can view bimbel reports" ON public.laporan_bimbel;
+DROP POLICY IF EXISTS "Tutors can insert own bimbel reports" ON public.laporan_bimbel;
+DROP POLICY IF EXISTS "Tutor and Owner can update bimbel reports" ON public.laporan_bimbel;
+DROP POLICY IF EXISTS "Tutor and Owner can delete bimbel reports" ON public.laporan_bimbel;
+DROP POLICY IF EXISTS "Tutor and Owner can manage bimbel reports" ON public.laporan_bimbel;
+
+CREATE POLICY "Tutor and Owner can view bimbel reports"
+ON public.laporan_bimbel FOR SELECT
+TO authenticated
+USING (
+    tutor_id = auth.uid() 
+    OR auth.uid() IN (SELECT id FROM public.users_profile WHERE role = 'owner')
+);
+
+CREATE POLICY "Tutor and Owner can insert bimbel reports"
+ON public.laporan_bimbel FOR INSERT
+TO authenticated
+WITH CHECK (
+    tutor_id = auth.uid() 
+    OR auth.uid() IN (SELECT id FROM public.users_profile WHERE role = 'owner')
+);
+
+CREATE POLICY "Tutor and Owner can update bimbel reports"
+ON public.laporan_bimbel FOR UPDATE
+TO authenticated
+USING (
+    tutor_id = auth.uid() 
+    OR auth.uid() IN (SELECT id FROM public.users_profile WHERE role = 'owner')
+)
+WITH CHECK (
+    tutor_id = auth.uid() 
+    OR auth.uid() IN (SELECT id FROM public.users_profile WHERE role = 'owner')
+);
+
+CREATE POLICY "Tutor and Owner can delete bimbel reports"
+ON public.laporan_bimbel FOR DELETE
+TO authenticated
+USING (
+    tutor_id = auth.uid() 
+    OR auth.uid() IN (SELECT id FROM public.users_profile WHERE role = 'owner')
+);
+
+GRANT ALL ON public.laporan_bimbel TO authenticated;
+GRANT ALL ON public.laporan_bimbel TO service_role;
+
+-- B. PERBAIKI RLS LAPORAN TIKTOK (HOST DAPAT FULL CRUD LAPORAN SENDIRI, OWNER BISA SEMUA)
+ALTER TABLE public.laporan_tiktok ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Owner can update or delete tiktok reports" ON public.laporan_tiktok;
+DROP POLICY IF EXISTS "Host and Owner can view tiktok reports" ON public.laporan_tiktok;
+DROP POLICY IF EXISTS "Hosts can insert own tiktok reports" ON public.laporan_tiktok;
+DROP POLICY IF EXISTS "Host and Owner can update tiktok reports" ON public.laporan_tiktok;
+DROP POLICY IF EXISTS "Host and Owner can delete tiktok reports" ON public.laporan_tiktok;
+DROP POLICY IF EXISTS "Host and Owner can manage tiktok reports" ON public.laporan_tiktok;
+
+CREATE POLICY "Host and Owner can view tiktok reports"
+ON public.laporan_tiktok FOR SELECT
+TO authenticated
+USING (
+    host_id = auth.uid() 
+    OR auth.uid() IN (SELECT id FROM public.users_profile WHERE role = 'owner')
+);
+
+CREATE POLICY "Host and Owner can insert tiktok reports"
+ON public.laporan_tiktok FOR INSERT
+TO authenticated
+WITH CHECK (
+    host_id = auth.uid() 
+    OR auth.uid() IN (SELECT id FROM public.users_profile WHERE role = 'owner')
+);
+
+CREATE POLICY "Host and Owner can update tiktok reports"
+ON public.laporan_tiktok FOR UPDATE
+TO authenticated
+USING (
+    host_id = auth.uid() 
+    OR auth.uid() IN (SELECT id FROM public.users_profile WHERE role = 'owner')
+)
+WITH CHECK (
+    host_id = auth.uid() 
+    OR auth.uid() IN (SELECT id FROM public.users_profile WHERE role = 'owner')
+);
+
+CREATE POLICY "Host and Owner can delete tiktok reports"
+ON public.laporan_tiktok FOR DELETE
+TO authenticated
+USING (
+    host_id = auth.uid() 
+    OR auth.uid() IN (SELECT id FROM public.users_profile WHERE role = 'owner')
+);
+
+GRANT ALL ON public.laporan_tiktok TO authenticated;
+GRANT ALL ON public.laporan_tiktok TO service_role;
+
+-- C. FUNGSI RPC SECURITY DEFINER: TUTOR UPDATE LAPORAN BIMBEL (FAIL-SAFE)
+CREATE OR REPLACE FUNCTION public.tutor_update_laporan_bimbel(
+    p_id UUID,
+    p_tanggal DATE,
+    p_murid_id UUID,
+    p_mata_pelajaran TEXT,
+    p_topik TEXT,
+    p_ringkasan TEXT,
+    p_foto_kegiatan_url TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+    v_uid UUID := auth.uid();
+    v_role TEXT;
+    v_report_tutor UUID;
+BEGIN
+    SELECT tutor_id INTO v_report_tutor FROM public.laporan_bimbel WHERE id = p_id;
+    IF v_report_tutor IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Laporan tidak ditemukan');
+    END IF;
+
+    SELECT role::text INTO v_role FROM public.users_profile WHERE id = v_uid;
+    IF v_role != 'owner' AND v_report_tutor != v_uid THEN
+        RAISE EXCEPTION 'Akses ditolak: Anda hanya dapat memperbarui laporan Anda sendiri.';
+    END IF;
+
+    UPDATE public.laporan_bimbel
+    SET tanggal = p_tanggal,
+        murid_id = p_murid_id,
+        mata_pelajaran = trim(p_mata_pelajaran),
+        topik = trim(p_topik),
+        ringkasan = trim(p_ringkasan),
+        foto_kegiatan_url = p_foto_kegiatan_url
+    WHERE id = p_id;
+
+    RETURN jsonb_build_object('success', true, 'id', p_id);
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.tutor_update_laporan_bimbel TO authenticated;
+
+-- D. FUNGSI RPC SECURITY DEFINER: TUTOR HAPUS LAPORAN BIMBEL (FAIL-SAFE)
+CREATE OR REPLACE FUNCTION public.tutor_delete_laporan_bimbel(p_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+    v_uid UUID := auth.uid();
+    v_role TEXT;
+    v_report_tutor UUID;
+BEGIN
+    SELECT tutor_id INTO v_report_tutor FROM public.laporan_bimbel WHERE id = p_id;
+    IF v_report_tutor IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Laporan tidak ditemukan');
+    END IF;
+
+    SELECT role::text INTO v_role FROM public.users_profile WHERE id = v_uid;
+    IF v_role != 'owner' AND v_report_tutor != v_uid THEN
+        RAISE EXCEPTION 'Akses ditolak: Anda hanya dapat menghapus laporan Anda sendiri.';
+    END IF;
+
+    DELETE FROM public.laporan_bimbel WHERE id = p_id;
+    RETURN jsonb_build_object('success', true, 'id', p_id);
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.tutor_delete_laporan_bimbel TO authenticated;
+
+-- E. FUNGSI RPC SECURITY DEFINER: HOST UPDATE LAPORAN TIKTOK (FAIL-SAFE)
+CREATE OR REPLACE FUNCTION public.host_update_laporan_tiktok(
+    p_id UUID,
+    p_tanggal DATE,
+    p_durasi_menit INT,
+    p_tayangan INT,
+    p_impresi INT,
+    p_gmv_rupiah NUMERIC,
+    p_catatan TEXT DEFAULT NULL,
+    p_foto_bukti_url TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+    v_uid UUID := auth.uid();
+    v_role TEXT;
+    v_report_host UUID;
+BEGIN
+    SELECT host_id INTO v_report_host FROM public.laporan_tiktok WHERE id = p_id;
+    IF v_report_host IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Laporan tidak ditemukan');
+    END IF;
+
+    SELECT role::text INTO v_role FROM public.users_profile WHERE id = v_uid;
+    IF v_role != 'owner' AND v_report_host != v_uid THEN
+        RAISE EXCEPTION 'Akses ditolak: Anda hanya dapat memperbarui laporan Anda sendiri.';
+    END IF;
+
+    UPDATE public.laporan_tiktok
+    SET tanggal = p_tanggal,
+        durasi_menit = p_durasi_menit,
+        tayangan = p_tayangan,
+        impresi = p_impresi,
+        gmv_rupiah = p_gmv_rupiah,
+        catatan = p_catatan,
+        foto_bukti_url = COALESCE(p_foto_bukti_url, foto_bukti_url)
+    WHERE id = p_id;
+
+    RETURN jsonb_build_object('success', true, 'id', p_id);
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.host_update_laporan_tiktok TO authenticated;
+
+-- F. FUNGSI RPC SECURITY DEFINER: HOST HAPUS LAPORAN TIKTOK (FAIL-SAFE)
+CREATE OR REPLACE FUNCTION public.host_delete_laporan_tiktok(p_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+    v_uid UUID := auth.uid();
+    v_role TEXT;
+    v_report_host UUID;
+BEGIN
+    SELECT host_id INTO v_report_host FROM public.laporan_tiktok WHERE id = p_id;
+    IF v_report_host IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Laporan tidak ditemukan');
+    END IF;
+
+    SELECT role::text INTO v_role FROM public.users_profile WHERE id = v_uid;
+    IF v_role != 'owner' AND v_report_host != v_uid THEN
+        RAISE EXCEPTION 'Akses ditolak: Anda hanya dapat menghapus laporan Anda sendiri.';
+    END IF;
+
+    DELETE FROM public.laporan_tiktok WHERE id = p_id;
+    RETURN jsonb_build_object('success', true, 'id', p_id);
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.host_delete_laporan_tiktok TO authenticated;
+

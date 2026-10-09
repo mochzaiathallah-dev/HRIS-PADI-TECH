@@ -518,17 +518,17 @@ export const AiAssistantModal: React.FC = () => {
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-3 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-xl shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer group"
+        className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-40 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 sm:py-3 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-xl shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer group"
         title="Buka AI Asisten Cerdas HRIS PADI TECH"
       >
-        <Sparkles className="h-5 w-5 text-amber-300 animate-pulse" />
-        <span className="text-xs font-bold tracking-wide">Tanya AI Asisten</span>
+        <Sparkles className="h-4 w-4 sm:h-5 sm:w-5 text-amber-300 animate-pulse" />
+        <span className="text-[11px] sm:text-xs font-bold tracking-wide">Tanya AI Asisten</span>
       </button>
 
       {/* Main Full-Screen Dialog (Gemini Style Interface) */}
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-in fade-in">
-          <div className="relative w-full max-w-6xl h-[92vh] max-h-[850px] bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col md:flex-row text-slate-100 font-sans">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-1 sm:p-4 bg-black/75 backdrop-blur-md animate-in fade-in">
+          <div className="relative w-full max-w-6xl h-[95vh] sm:h-[92vh] max-h-[850px] bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col md:flex-row text-slate-100 font-sans">
             
             {/* ============================================================== */}
             {/* 1. LEFT SIDEBAR (GEMINI CONVERSATIONS LIST)                    */}
