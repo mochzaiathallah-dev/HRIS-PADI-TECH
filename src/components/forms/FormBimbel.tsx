@@ -13,10 +13,12 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { AddMuridModal } from '@/components/dashboard/AddMuridModal'
 import { 
   GraduationCap, 
   Calendar, 
   User, 
+  UserPlus,
   BookOpen, 
   FileText, 
   CheckCircle2, 
@@ -84,6 +86,7 @@ export const FormBimbel: React.FC<FormBimbelProps> = ({
     fotoUrls: string[]
   } | null>(null)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
+  const [isAddMuridModalOpen, setIsAddMuridModalOpen] = useState(false)
 
   const todayStr = new Date().toISOString().split('T')[0]
 
@@ -124,6 +127,16 @@ export const FormBimbel: React.FC<FormBimbelProps> = ({
       setIsLoadingMurid(false)
     }
   }, [])
+
+  // Callback saat murid baru berhasil didaftarkan oleh tutor
+  const handleMuridCreated = (newMurid: { id: string; nama: string; tingkat_kelas: string }) => {
+    setMuridList((prev) => {
+      const exists = prev.some((m) => m.id === newMurid.id)
+      if (exists) return prev
+      return [...prev, newMurid as Murid].sort((a, b) => a.nama.localeCompare(b.nama))
+    })
+    setValue('murid_id', newMurid.id, { shouldValidate: true })
+  }
 
   // 2. Fetch Riwayat Laporan Milik Tutor Ini (RLS Protected)
   const fetchHistory = useCallback(async () => {
@@ -194,6 +207,20 @@ export const FormBimbel: React.FC<FormBimbelProps> = ({
     fetchMurid()
     fetchHistory()
   }, [fetchMurid, fetchHistory])
+
+  // Realtime subscription untuk sinkronisasi murid di frontend tutor
+  useEffect(() => {
+    const channel = supabase
+      .channel('realtime_form_bimbel_murid_sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'murid' }, () => {
+        fetchMurid()
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [fetchMurid])
 
   // 3. Client-Side Image Selection & Compression (Mendukung Lebih dari 1 Foto, Auto WebP)
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -461,10 +488,21 @@ ${report.ringkasan}${photoSection}`
 
             {/* Pilih Murid */}
             <div className="space-y-1.5">
-              <Label htmlFor="murid_id" className="text-xs font-semibold flex items-center gap-1.5">
-                <User className="h-3.5 w-3.5 text-blue-500" />
-                Nama Murid
-              </Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="murid_id" className="text-xs font-semibold flex items-center gap-1.5">
+                  <User className="h-3.5 w-3.5 text-blue-500" />
+                  Nama Murid
+                </Label>
+                <button
+                  type="button"
+                  onClick={() => setIsAddMuridModalOpen(true)}
+                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:text-blue-700 font-semibold flex items-center gap-1 hover:underline cursor-pointer"
+                  title="Tambah data siswa/murid baru langsung dari dashboard tutor"
+                >
+                  <UserPlus className="h-3 w-3" />
+                  + Input Murid Baru
+                </button>
+              </div>
               <select
                 id="murid_id"
                 className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-900"
@@ -805,6 +843,14 @@ ${report.ringkasan}${photoSection}`
           </div>
         </div>
       )}
+
+      {/* Modal Tambah Murid Baru Langsung Oleh Tutor */}
+      <AddMuridModal
+        isOpen={isAddMuridModalOpen}
+        onClose={() => setIsAddMuridModalOpen(false)}
+        onSuccess={() => fetchMurid()}
+        onCreated={handleMuridCreated}
+      />
     </div>
   )
 }

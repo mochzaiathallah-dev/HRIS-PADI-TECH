@@ -77,8 +77,8 @@ export const PdfExportModal: React.FC<PdfExportModalProps> = ({
     return `${months[mIdx] || month} ${year}`
   }
 
-  // Generate PDF
-  const handleExportPDF = () => {
+  // Generate PDF (Asynchronous untuk memuat foto dokumentasi)
+  const handleExportPDF = async () => {
     if (!selectedMurid) {
       setMessage('Silakan pilih data murid terlebih dahulu.')
       return
@@ -89,11 +89,11 @@ export const PdfExportModal: React.FC<PdfExportModalProps> = ({
     }
 
     setIsGenerating(true)
-    setMessage(null)
+    setMessage('Menyiapkan dokumen & memuat foto dokumentasi belajar...')
 
     try {
       const monthLabel = formatMonthLabel(selectedMonth)
-      generateStudentReportPDF({
+      await generateStudentReportPDF({
         namaSiswa: selectedMurid.nama,
         kelas: selectedMurid.tingkat_kelas,
         tutorNama: tutorName.trim() || 'Tutor Pendamping',
@@ -102,7 +102,7 @@ export const PdfExportModal: React.FC<PdfExportModalProps> = ({
         sesiList: filteredSessions,
       })
 
-      setMessage('Dokumen PDF berhasil di-generate dan diunduh!')
+      setMessage('Dokumen PDF raport beserta foto dokumentasi berhasil dibuat dan diunduh!')
     } catch (err: any) {
       console.error('Error generating PDF:', err)
       setMessage(`Gagal membuat PDF: ${err.message}`)

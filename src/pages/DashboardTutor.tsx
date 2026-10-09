@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { LaporanBimbel, Murid } from '@/types'
 import { FormBimbel } from '@/components/forms/FormBimbel'
 import { EditBimbelModal } from '@/components/dashboard/EditBimbelModal'
+import { AddMuridModal } from '@/components/dashboard/AddMuridModal'
 import { DeleteConfirmModal } from '@/components/dashboard/DeleteConfirmModal'
 import { PdfExportModal } from '@/components/dashboard/PdfExportModal'
 import { AiAssistantModal } from '@/components/ai/AiAssistantModal'
@@ -17,6 +18,7 @@ import {
   LogOut, 
   ShieldCheck, 
   User, 
+  UserPlus,
   Smartphone,
   Sparkles,
   FileDown,
@@ -49,6 +51,7 @@ export const DashboardTutorPage: React.FC = () => {
   const [deleteTarget, setDeleteTarget] = useState<LaporanBimbel | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false)
+  const [isAddMuridOpen, setIsAddMuridOpen] = useState(false)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
 
   // Fetch Reports for Tutor
@@ -143,6 +146,19 @@ export const DashboardTutorPage: React.FC = () => {
           schema: 'public',
           table: 'laporan_bimbel',
           filter: `tutor_id=eq.${user.id}`,
+        },
+        () => {
+          setRealtimePulse(true)
+          setTimeout(() => setRealtimePulse(false), 2000)
+          fetchTutorData()
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'murid',
         },
         () => {
           setRealtimePulse(true)
@@ -278,8 +294,17 @@ ${item.ringkasan}${photoSection}`
             </div>
           </div>
 
-          {/* Action Button: PDF Export */}
-          <div className="flex items-center gap-2">
+          {/* Action Buttons: Tambah Murid & PDF Export */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              onClick={() => setIsAddMuridOpen(true)}
+              className="bg-emerald-500/25 hover:bg-emerald-500/35 text-white border border-emerald-300/40 text-xs h-9 gap-1.5 backdrop-blur shadow-xs"
+              title="Input data murid / siswa baru"
+            >
+              <UserPlus className="h-3.5 w-3.5 text-emerald-300" />
+              <span>+ Tambah Murid</span>
+            </Button>
             <Button
               type="button"
               onClick={() => setIsPdfModalOpen(true)}
@@ -523,6 +548,13 @@ ${item.ringkasan}${photoSection}`
         onClose={() => setIsPdfModalOpen(false)}
         allBimbelReports={reports}
         muridList={muridList}
+      />
+
+      {/* Add Murid Modal */}
+      <AddMuridModal
+        isOpen={isAddMuridOpen}
+        onClose={() => setIsAddMuridOpen(false)}
+        onSuccess={() => fetchTutorData()}
       />
 
       {/* Photo Preview Modal */}

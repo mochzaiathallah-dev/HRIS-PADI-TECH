@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { LaporanBimbel } from '@/types'
+import { parsePhotoUrls } from '@/lib/photoUtils'
 
 export interface StudentReportParams {
   namaSiswa: string
@@ -37,7 +38,6 @@ function formatIndonesianDate(dateStr: string): string {
  */
 function formatBulletPoints(text: string): string {
   if (!text) return '-'
-  // If already contains bullets, normalize
   const lines = text
     .split(/\r?\n|;/)
     .map((l) => l.trim())
@@ -47,14 +47,45 @@ function formatBulletPoints(text: string): string {
     return lines.map((l) => (l.startsWith('•') || l.startsWith('-') ? `• ${l.replace(/^[•\-]\s*/, '')}` : `• ${l}`)).join('\n')
   }
 
-  // If single sentence, split by sentences or keep
   return `• ${text.replace(/^[•\-]\s*/, '')}`
 }
 
 /**
- * Generate PDF matching "Laporan Belajar Siswa" layout
+ * Helper asynchronous untuk memuat gambar dari URL dan mengonversi ke base64 JPEG
  */
-export function generateStudentReportPDF(params: StudentReportParams) {
+async function loadImageAsDataUrl(url: string): Promise<{ dataUrl: string; width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.crossOrigin = 'Anonymous'
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas')
+        const naturalW = img.naturalWidth || img.width || 400
+        const naturalH = img.naturalHeight || img.height || 300
+        canvas.width = naturalW
+        canvas.height = naturalH
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return resolve(null)
+        ctx.drawImage(img, 0, 0)
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+        resolve({ dataUrl, width: naturalW, height: naturalH })
+      } catch (e) {
+        console.warn('Canvas conversion failed for image:', url, e)
+        resolve(null)
+      }
+    }
+    img.onerror = () => {
+      console.warn('Failed to load image from URL:', url)
+      resolve(null)
+    }
+    img.src = url
+  })
+}
+
+/**
+ * Generate PDF resmi "Laporan Belajar Siswa" lengkap dengan dokumentasi foto hasil inputan tutor
+ */
+export async function generateStudentReportPDF(params: StudentReportParams): Promise<void> {
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -115,7 +146,7 @@ export function generateStudentReportPDF(params: StudentReportParams) {
   // -------------------------------------------------------------
   // 2. SECTION TITLE: RINGKASAN KEGIATAN BELAJAR
   // -------------------------------------------------------------
-  let sectionY = headerBoxY + headerBoxHeight + 8
+  const sectionY = headerBoxY + headerBoxHeight + 8
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(10.5)
   doc.setTextColor(primaryNavy[0], primaryNavy[1], primaryNavy[2])
@@ -163,7 +194,6 @@ export function generateStudentReportPDF(params: StudentReportParams) {
       4: { cellWidth: 'auto', fontStyle: 'normal' },
     },
     didParseCell: (data) => {
-      // Bold No header
       if (data.section === 'head' && data.column.index === 0) {
         data.cell.styles.halign = 'center'
       }
@@ -211,7 +241,115 @@ export function generateStudentReportPDF(params: StudentReportParams) {
   })
 
   // -------------------------------------------------------------
-  // 5. FOOTER ON ALL PAGES
+  // 5. SECTION: DOKUMENTASI KEGIATAN BELAJAR (FOTO SESI BELAJAR)
+  // -------------------------------------------------------------
+  const photoItems: { url: string; tanggal: string; mapel: string; topik: string }[] = []
+  params.sesiList.forEach((sesi) => {
+    const urls = parsePhotoUrls(sesi.foto_kegiatan_url)
+    urls.forEach((u) => {
+      photoItems.push({
+        url: u,
+        tanggal: formatIndonesianDate(sesi.tanggal),
+        mapel: sesi.mata_pelajaran || '',
+        topik: sesi.topik || '',
+      })
+    })
+  })
+
+  if (photoItems.length > 0) {
+    // Muat semua gambar secara paralel
+    const loadedPhotos = await Promise.all(
+      photoItems.map(async (item) => {
+        const imgData = await loadImageAsDataUrl(item.url)
+        return imgData ? { ...item, imgData } : null
+      })
+    )
+
+    const validPhotos = loadedPhotos.filter((p): p is NonNullable<typeof p> => p !== null)
+
+    if (validPhotos.length > 0) {
+      let photoSectionY = evalBoxY + evalBoxHeight + 8
+
+      // Jika sisa ruang di halaman saat ini kurang dari 70mm, buat halaman baru untuk foto
+      if (photoSectionY + 68 > pageHeight - 16) {
+        doc.addPage()
+        photoSectionY = 15
+      }
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(10.5)
+      doc.setTextColor(primaryNavy[0], primaryNavy[1], primaryNavy[2])
+      doc.text('DOKUMENTASI KEGIATAN BELAJAR', margin, photoSectionY)
+
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(7.5)
+      doc.setTextColor(100, 116, 139)
+      doc.text(
+        `Foto dokumentasi sesi bimbingan belajar yang tersimpan di sistem (${validPhotos.length} Foto Dokumentasi)`,
+        margin,
+        photoSectionY + 4.5
+      )
+
+      let currentPhotoY = photoSectionY + 8
+      const colGap = 6
+      const cardWidth = (contentWidth - colGap) / 2 // Sekitar 88mm
+      const cardImgHeight = 44
+      const cardHeight = 56 // Foto + Kotak Keterangan Tanggal & Topik
+
+      for (let idx = 0; idx < validPhotos.length; idx++) {
+        const photo = validPhotos[idx]
+        const col = idx % 2
+        const cardX = margin + col * (cardWidth + colGap)
+
+        // Cek jika baris baru melebihi batas bawah halaman
+        if (col === 0 && currentPhotoY + cardHeight > pageHeight - 14) {
+          doc.addPage()
+          currentPhotoY = 15
+        }
+
+        // Bingkai Kartu Foto
+        doc.setDrawColor(borderGrey[0], borderGrey[1], borderGrey[2])
+        doc.setLineWidth(0.3)
+        doc.setFillColor(248, 250, 252)
+        doc.roundedRect(cardX, currentPhotoY, cardWidth, cardHeight, 2, 2, 'FD')
+
+        // Render Gambar
+        try {
+          doc.addImage(
+            photo.imgData.dataUrl,
+            'JPEG',
+            cardX + 1.5,
+            currentPhotoY + 1.5,
+            cardWidth - 3,
+            cardImgHeight
+          )
+        } catch (e) {
+          console.warn('Gagal render image ke PDF:', e)
+        }
+
+        // Teks Keterangan Foto
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(7.5)
+        doc.setTextColor(textDark[0], textDark[1], textDark[2])
+        const rawTitle = `${photo.mapel ? photo.mapel + ' • ' : ''}${photo.topik || 'Sesi Belajar'}`
+        const splitTitle = doc.splitTextToSize(rawTitle, cardWidth - 4)
+        doc.text(splitTitle[0] || rawTitle, cardX + 2, currentPhotoY + cardImgHeight + 4.5)
+
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(7)
+        doc.setTextColor(100, 116, 139)
+        doc.text(photo.tanggal, cardX + 2, currentPhotoY + cardImgHeight + 8.5)
+
+        // Pindah baris Y setelah kolom kanan terisi atau foto terakhir
+        if (col === 1 || idx === validPhotos.length - 1) {
+          currentPhotoY += cardHeight + 4
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------
+  // 6. FOOTER PADA SELURUH HALAMAN
   // -------------------------------------------------------------
   const totalPages = (doc.internal as any).getNumberOfPages()
   for (let i = 1; i <= totalPages; i++) {
@@ -220,16 +358,16 @@ export function generateStudentReportPDF(params: StudentReportParams) {
     doc.setFontSize(7.5)
     doc.setTextColor(100, 116, 139)
 
-    // Left footer
+    // Footer Kiri
     doc.text(`Laporan Belajar Siswa - ${params.namaSiswa}`, margin, pageHeight - 6)
 
-    // Right footer
+    // Footer Kanan
     doc.text(`Halaman ${i} dari ${totalPages}`, pageWidth - margin, pageHeight - 6, {
       align: 'right',
     })
   }
 
-  // Download PDF file directly in browser
+  // Unduh dokumen PDF langsung di browser pengguna
   const sanitizedName = params.namaSiswa.replace(/[^a-zA-Z0-9_-]/g, '_')
   const sanitizedPeriod = (params.periodeBulan || 'Laporan').replace(/[^a-zA-Z0-9_-]/g, '_')
   const fileName = `Laporan_Belajar_${sanitizedName}_${sanitizedPeriod}.pdf`

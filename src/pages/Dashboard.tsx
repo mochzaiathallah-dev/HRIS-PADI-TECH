@@ -384,7 +384,7 @@ export const DashboardPage: React.FC = () => {
   }
 
   // Quick Single Student PDF Export
-  const handleQuickStudentPdf = (item: LaporanBimbel) => {
+  const handleQuickStudentPdf = async (item: LaporanBimbel) => {
     const studentMurid = muridList.find((m) => m.id === item.murid_id)
     const studentName = item.murid?.nama || studentMurid?.nama || 'Siswa'
     const studentClass = item.murid?.tingkat_kelas || studentMurid?.tingkat_kelas || 'Kelas'
@@ -402,7 +402,7 @@ export const DashboardPage: React.FC = () => {
     const mIdx = parseInt(month, 10) - 1
     const monthLabel = `${months[mIdx] || month} ${year}`
 
-    generateStudentReportPDF({
+    await generateStudentReportPDF({
       namaSiswa: studentName,
       kelas: studentClass,
       tutorNama: item.tutor?.nama || 'Tutor Bimbel',

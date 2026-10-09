@@ -45,10 +45,19 @@ function aiAssistantDevPlugin(): Plugin {
               return
             }
 
+            const NO_MARKDOWN_INSTRUCTION = `
+ATURAN FORMAT JAWABAN (WAJIB DIIKUTI):
+1. JANGAN PERNAH gunakan tanda bintang (**) atau (*) untuk format teks.
+2. JANGAN PERNAH gunakan tanda pagar (#, ##, ###) untuk heading/judul.
+3. JANGAN PERNAH gunakan garis pemisah (---) atau tanda petik blok (>).
+4. Tuliskan jawaban secara langsung dalam teks bersih, alami, ramah, dan mengalir rapi.
+5. Gunakan penomoran biasa (1., 2., 3.) untuk daftar poin.
+6. Jawab secara lengkap, mendalam, tuntas sampai selesai, dan JANGAN terpotong di tengah kalimat.`
+
             const SYSTEM_PROMPTS: Record<string, string> = {
-              tutor: `Anda adalah Asisten AI Cerdas untuk Tutor Bimbingan Belajar di HRIS PADI TECH. Tugas Anda: membuat soal latihan & kunci jawaban (SD-SMA), menjelaskan materi yang rumit secara sederhana, memberikan ide ice-breaking, dan merumuskan catatan evaluasi siswa. Berikan respon rapi, edukatif, dan ramah.`,
-              host: `Anda adalah Asisten AI Cerdas untuk Host TikTok Live Commerce di HRIS PADI TECH. Tugas Anda: membuat hook pembuka live 3 detik pertama, menyusun script keranjang kuning persuasif, tips menaikkan retensi & interaksi penonton, dan strategi meningkatkan GMV penjualan. Berikan respon energik dan aplikatif.`,
-              owner: `Anda adalah Penasihat AI Eksekutif Bisnis untuk Owner di HRIS PADI TECH. Tugas Anda: memberikan analisis strategi omset bimbel & live, KPI evaluasi tim, draf pengumuman resmi perusahaan, dan efisiensi operasional. Berikan respon profesional dan analitis.`
+              tutor: `Anda adalah Asisten AI Cerdas untuk Tutor Bimbingan Belajar di HRIS PADI TECH. Tugas Anda: membuat soal latihan & kunci jawaban (SD-SMA), menjelaskan materi yang rumit secara sederhana, memberikan ide ice-breaking, dan merumuskan catatan evaluasi siswa. Berikan respon rapi, edukatif, dan ramah.\n${NO_MARKDOWN_INSTRUCTION}`,
+              host: `Anda adalah Asisten AI Cerdas untuk Host TikTok Live Commerce di HRIS PADI TECH. Tugas Anda: membuat hook pembuka live 3 detik pertama, menyusun script keranjang kuning persuasif, tips menaikkan retensi & interaksi penonton, dan strategi meningkatkan GMV penjualan. Berikan respon energik dan aplikatif.\n${NO_MARKDOWN_INSTRUCTION}`,
+              owner: `Anda adalah Penasihat AI Eksekutif Bisnis untuk Owner di HRIS PADI TECH. Tugas Anda: memberikan analisis strategi omset bimbel & live, KPI evaluasi tim, draf pengumuman resmi perusahaan, dan efisiensi operasional. Berikan respon profesional dan analitis.\n${NO_MARKDOWN_INSTRUCTION}`
             }
 
             const systemPrompt = SYSTEM_PROMPTS[role] || SYSTEM_PROMPTS.tutor
@@ -60,7 +69,7 @@ function aiAssistantDevPlugin(): Plugin {
               }],
               generationConfig: {
                 temperature: 0.7,
-                maxOutputTokens: 1500
+                maxOutputTokens: 8192
               }
             }
 
@@ -109,9 +118,21 @@ function aiAssistantDevPlugin(): Plugin {
               return
             }
 
+            // Sanitasi teks agar bersih tanpa asterisks atau hashtags
+            const cleanedAnswer = answer
+              .replace(/\*\*(.*?)\*\*/g, '$1')
+              .replace(/__(.*?)__/g, '$1')
+              .replace(/(^|[^\*])\*(?!\s)(.*?)\*(?!\*)/g, '$1$2')
+              .replace(/^\*\s+/gm, '• ')
+              .replace(/^#{1,6}\s+/gm, '')
+              .replace(/^[\-\*_]{3,}\s*$/gm, '')
+              .replace(/^>\s+/gm, '')
+              .replace(/\$(.*?)\$/g, '$1')
+              .trim()
+
             res.statusCode = 200
             res.setHeader('Content-Type', 'application/json')
-            res.end(JSON.stringify({ success: true, answer }))
+            res.end(JSON.stringify({ success: true, answer: cleanedAnswer }))
           } catch (err: any) {
             res.statusCode = 500
             res.setHeader('Content-Type', 'application/json')

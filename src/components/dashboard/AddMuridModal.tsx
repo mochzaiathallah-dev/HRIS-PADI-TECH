@@ -20,12 +20,14 @@ interface AddMuridModalProps {
   isOpen: boolean
   onClose: () => void
   onSuccess: () => void
+  onCreated?: (newMurid: { id: string; nama: string; tingkat_kelas: string }) => void
 }
 
 export const AddMuridModal: React.FC<AddMuridModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  onCreated,
 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -50,22 +52,57 @@ export const AddMuridModal: React.FC<AddMuridModalProps> = ({
     setSuccessMessage(null)
 
     try {
-      const { error } = await supabase.from('murid').insert({
-        nama: values.nama.trim(),
-        tingkat_kelas: values.tingkat_kelas.trim(),
-      })
+      let createdMurid: { id: string; nama: string; tingkat_kelas: string } | null = null
 
-      if (error) throw error
+      // Percobaan 1: Direct insert ke tabel murid
+      const { data: insData, error: insErr } = await supabase
+        .from('murid')
+        .insert({
+          nama: values.nama.trim(),
+          tingkat_kelas: values.tingkat_kelas.trim(),
+        })
+        .select()
+        .single()
+
+      if (!insErr && insData) {
+        createdMurid = insData
+      } else if (insErr) {
+        // Percobaan 2: Fallback ke RPC SECURITY DEFINER tutor_create_murid jika terkena RLS
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('tutor_create_murid', {
+          p_nama: values.nama.trim(),
+          p_tingkat_kelas: values.tingkat_kelas.trim(),
+        })
+
+        if (rpcErr) {
+          throw new Error(insErr.message || rpcErr.message || 'Gagal menambahkan data murid.')
+        }
+
+        if (rpcData && rpcData.id) {
+          createdMurid = {
+            id: rpcData.id,
+            nama: values.nama.trim(),
+            tingkat_kelas: values.tingkat_kelas.trim(),
+          }
+        }
+      }
 
       setSuccessMessage(`Siswa ${values.nama} berhasil ditambahkan!`)
+      if (createdMurid && onCreated) {
+        onCreated(createdMurid)
+      }
+
       reset()
       setTimeout(() => {
         onSuccess()
         onClose()
-      }, 1200)
+      }, 900)
     } catch (err: any) {
       console.error('Error creating murid:', err)
-      setErrorMessage(err.message || 'Gagal menambahkan siswa.')
+      setErrorMessage(
+        err.message?.includes('violates row-level security')
+          ? 'Perlu menjalankan script SQL update_murid_and_ai_chat.sql di Supabase SQL Editor agar Tutor diizinkan mendaftarkan murid.'
+          : err.message || 'Gagal menambahkan data murid.'
+      )
     } finally {
       setIsSubmitting(false)
     }
