@@ -22,9 +22,21 @@ import {
   Menu
 } from 'lucide-react'
 
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 interface ChatMessage {
   id: string
   session_id: string
+  session_title?: string
   sender: 'user' | 'ai'
   text: string
   timestamp: string
@@ -92,13 +104,27 @@ export const AiAssistantModal: React.FC = () => {
   const [searchSessionQuery, setSearchSessionQuery] = useState('')
 
   // State Sessions & Messages
-  const [currentSessionId, setCurrentSessionId] = useState<string>(() => `session-${Date.now()}`)
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => generateUUID())
   const [allMessages, setAllMessages] = useState<ChatMessage[]>([])
+  const isInitialLoadRef = useRef(true)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
 
   const currentRole = role === 'host' ? 'host' : role === 'owner' ? 'owner' : 'tutor'
   const config = ROLE_PRESETS[currentRole]
+
+  // Reset initial load state when user or role changes
+  useEffect(() => {
+    isInitialLoadRef.current = true
+    setCurrentSessionId(generateUUID())
+  }, [user?.id, currentRole])
+
+  // Reset initial load flag when modal is closed
+  useEffect(() => {
+    if (!isOpen) {
+      isInitialLoadRef.current = true
+    }
+  }, [isOpen])
 
   // 1. Fetch Chat History dari Supabase
   const fetchChatHistory = useCallback(async () => {
@@ -116,6 +142,7 @@ export const AiAssistantModal: React.FC = () => {
         const mapped: ChatMessage[] = data.map((d: any) => ({
           id: d.id,
           session_id: d.session_id || 'default-session',
+          session_title: d.session_title || undefined,
           sender: d.message_role === 'user' ? 'user' : 'ai',
           text: sanitizeAiText(d.content),
           timestamp: new Date(d.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
@@ -123,18 +150,21 @@ export const AiAssistantModal: React.FC = () => {
         }))
         setAllMessages(mapped)
 
-        // Jika belum ada sesi aktif atau sesi kosong, pilih sesi terakhir yang ada
-        if (mapped.length > 0) {
-          const sessions = Array.from(new Set(mapped.map((m) => m.session_id)))
-          if (sessions.length > 0 && !sessions.includes(currentSessionId)) {
-            setCurrentSessionId(sessions[sessions.length - 1])
+        // Hanya saat pertama kali modal dibuka: pilih sesi tersimpan yang paling baru
+        if (isInitialLoadRef.current) {
+          isInitialLoadRef.current = false
+          if (mapped.length > 0) {
+            const sessions = Array.from(new Set(mapped.map((m) => m.session_id)))
+            if (sessions.length > 0) {
+              setCurrentSessionId(sessions[sessions.length - 1])
+            }
           }
         }
       }
     } catch (err) {
       console.debug('Notice fetching ai_chat_history:', err)
     }
-  }, [user?.id, currentRole, currentSessionId])
+  }, [user?.id, currentRole])
 
   useEffect(() => {
     if (isOpen) {
@@ -147,7 +177,7 @@ export const AiAssistantModal: React.FC = () => {
     if (!user?.id || !isOpen) return
 
     const channel = supabase
-      .channel('realtime_ai_chat_sync')
+      .channel(`realtime_ai_chat_${user.id}_${currentRole}`)
       .on(
         'postgres_changes',
         {
@@ -165,7 +195,7 @@ export const AiAssistantModal: React.FC = () => {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [user?.id, isOpen, fetchChatHistory])
+  }, [user?.id, isOpen, currentRole, fetchChatHistory])
 
   // Auto-scroll ke pesan terakhir
   useEffect(() => {
@@ -179,6 +209,9 @@ export const AiAssistantModal: React.FC = () => {
     allMessages.forEach((msg) => {
       const existing = map.get(msg.session_id)
       let title = existing?.title
+      if (!title && msg.session_title) {
+        title = msg.session_title
+      }
       if (!title && msg.sender === 'user') {
         title = msg.text.slice(0, 32) + (msg.text.length > 32 ? '...' : '')
       }
@@ -221,7 +254,7 @@ export const AiAssistantModal: React.FC = () => {
 
   // Mulai Percakapan Baru (Gemini "+ Percakapan Baru")
   const handleStartNewChat = () => {
-    const newId = `session-${Date.now()}`
+    const newId = generateUUID()
     setCurrentSessionId(newId)
     setPrompt('')
     if (window.innerWidth < 768) {
@@ -242,7 +275,7 @@ export const AiAssistantModal: React.FC = () => {
     }
   }
 
-  // Hapus Seleruh Sesi Chat Ini (CRUD Sesi)
+  // Hapus Seluruh Sesi Chat Ini (CRUD Sesi)
   const handleDeleteSession = async (sessionIdToDelete: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
     const confirmDelete = window.confirm('Hapus percakapan ini secara permanen?')
@@ -256,12 +289,21 @@ export const AiAssistantModal: React.FC = () => {
 
     if (user?.id) {
       try {
-        await supabase
-          .from('ai_chat_history')
-          .delete()
-          .eq('user_id', user.id)
-          .eq('role', currentRole)
-          .eq('session_id', sessionIdToDelete)
+        if (sessionIdToDelete === 'default-session') {
+          await supabase
+            .from('ai_chat_history')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('role', currentRole)
+            .is('session_id', null)
+        } else {
+          await supabase
+            .from('ai_chat_history')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('role', currentRole)
+            .eq('session_id', sessionIdToDelete)
+        }
       } catch (err) {
         console.warn('Gagal menghapus sesi dari Supabase:', err)
       }
@@ -273,13 +315,16 @@ export const AiAssistantModal: React.FC = () => {
     const text = (textToSend || prompt).trim()
     if (!text || isLoading) return
 
-    const userMsgId = `user-${Date.now()}`
+    const userMsgId = generateUUID()
     const userTimestamp = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
     const nowIso = new Date().toISOString()
+    const activeSessionId = currentSessionId
+    const sessionTitle = text.slice(0, 35)
 
     const userMsg: ChatMessage = {
       id: userMsgId,
-      session_id: currentSessionId,
+      session_id: activeSessionId,
+      session_title: sessionTitle,
       sender: 'user',
       text,
       timestamp: userTimestamp,
@@ -295,19 +340,23 @@ export const AiAssistantModal: React.FC = () => {
     if (user?.id) {
       try {
         const payload: any = {
+          id: userMsgId,
           user_id: user.id,
           role: currentRole,
           message_role: 'user',
           content: text,
-          session_id: currentSessionId,
-          session_title: text.slice(0, 35),
+          session_id: activeSessionId,
+          session_title: sessionTitle,
         }
         const { error: insErr } = await supabase.from('ai_chat_history').insert(payload)
         // Fallback jika kolom session_id belum dibuat di database
-        if (insErr && insErr.message.includes('session_id')) {
-          delete payload.session_id
-          delete payload.session_title
-          await supabase.from('ai_chat_history').insert(payload)
+        if (insErr) {
+          console.warn('Notice inserting user message:', insErr)
+          if (insErr.message?.includes('session_id')) {
+            delete payload.session_id
+            delete payload.session_title
+            await supabase.from('ai_chat_history').insert(payload)
+          }
         }
       } catch (err) {
         console.debug('Insert user message notice:', err)
@@ -330,10 +379,12 @@ export const AiAssistantModal: React.FC = () => {
       }
 
       const cleanAnswer = sanitizeAiText(data.answer || 'Respon tidak ditemukan.')
+      const aiMsgId = generateUUID()
 
       const aiMsg: ChatMessage = {
-        id: `ai-${Date.now()}`,
-        session_id: currentSessionId,
+        id: aiMsgId,
+        session_id: activeSessionId,
+        session_title: sessionTitle,
         sender: 'ai',
         text: cleanAnswer,
         timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
@@ -346,27 +397,33 @@ export const AiAssistantModal: React.FC = () => {
       if (user?.id) {
         try {
           const payload: any = {
+            id: aiMsgId,
             user_id: user.id,
             role: currentRole,
             message_role: 'assistant',
             content: cleanAnswer,
-            session_id: currentSessionId,
-            session_title: text.slice(0, 35),
+            session_id: activeSessionId,
+            session_title: sessionTitle,
           }
           const { error: insErr } = await supabase.from('ai_chat_history').insert(payload)
-          if (insErr && insErr.message.includes('session_id')) {
-            delete payload.session_id
-            delete payload.session_title
-            await supabase.from('ai_chat_history').insert(payload)
+          if (insErr) {
+            console.warn('Notice inserting AI message:', insErr)
+            if (insErr.message?.includes('session_id')) {
+              delete payload.session_id
+              delete payload.session_title
+              await supabase.from('ai_chat_history').insert(payload)
+            }
           }
         } catch (err) {
           console.debug('Insert AI message notice:', err)
         }
       }
     } catch (err: any) {
+      const errorMsgId = generateUUID()
       const errorMsg: ChatMessage = {
-        id: `ai-err-${Date.now()}`,
-        session_id: currentSessionId,
+        id: errorMsgId,
+        session_id: activeSessionId,
+        session_title: sessionTitle,
         sender: 'ai',
         text: `Maaf, terjadi kendala saat memproses jawaban: ${err.message || 'Koneksi ke server AI terputus.'}`,
         timestamp: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
@@ -724,7 +781,7 @@ export const AiAssistantModal: React.FC = () => {
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
                       onKeyDown={handleKeyDown}
-                      placeholder={`Tanyakan apa saja kepada AI Asisten ${config.title}...`}
+                      placeholder={`Tanyakan apa saja kepada ${config.title}...`}
                       disabled={isLoading}
                       className="w-full resize-none py-3.5 pl-4 pr-12 text-xs sm:text-sm bg-transparent text-slate-100 placeholder:text-slate-500 focus:outline-none max-h-32"
                     />
