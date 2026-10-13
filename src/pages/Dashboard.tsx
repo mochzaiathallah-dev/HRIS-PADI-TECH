@@ -1144,7 +1144,7 @@ export const DashboardPage: React.FC = () => {
                             <div className="flex flex-col">
                               <span>{item.host?.nama || '-'}</span>
                               <span className="text-[10px] text-pink-600 font-mono font-medium">
-                                {item.akun_tiktok || '@wangigaya'}
+                                {item.akun_tiktok || '-'}
                               </span>
                             </div>
                           </td>

@@ -15,6 +15,7 @@ import {
   addHostAccount, 
   removeHostAccount, 
   setActiveHostAccount,
+  syncHostSessionsAccount,
   normalizeTiktokHandle 
 } from '@/lib/hostAccountManager'
 
@@ -63,7 +64,10 @@ export const ManageAccountsModal: React.FC<ManageAccountsModalProps> = ({
       }
 
       setNewHandle('')
-      setSuccessMessage(`Akun ${clean} berhasil ditambahkan dan tersimpan ke Supabase!`)
+      // Otomatis sinkronkan sesi live ke akun baru ini di Supabase
+      const syncRes = await syncHostSessionsAccount(hostId, clean)
+      const countMsg = syncRes.updatedCount > 0 ? ` (${syncRes.updatedCount} sesi disinkronkan)` : ''
+      setSuccessMessage(`Akun ${clean} berhasil ditambahkan dan tersimpan ke Supabase${countMsg}!`)
       onAccountsUpdated(res.accounts, clean)
     } catch (err: any) {
       setErrorMessage(err.message || 'Gagal menambahkan akun TikTok.')
@@ -72,10 +76,20 @@ export const ManageAccountsModal: React.FC<ManageAccountsModalProps> = ({
     }
   }
 
-  const handleSelectActive = (acc: string) => {
+  const handleSelectActive = async (acc: string) => {
     setActiveHostAccount(hostId, acc)
     onAccountsUpdated(currentAccounts, acc)
-    setSuccessMessage(`Akun aktif diubah ke ${acc}`)
+    setSuccessMessage(`Akun aktif diubah ke ${acc}. Menyinkronkan data sesi...`)
+    try {
+      const syncRes = await syncHostSessionsAccount(hostId, acc)
+      if (syncRes.success && syncRes.updatedCount > 0) {
+        setSuccessMessage(`Akun aktif diubah ke ${acc} dan ${syncRes.updatedCount} sesi live berhasil disinkronkan di Supabase!`)
+      } else {
+        setSuccessMessage(`Akun aktif diubah ke ${acc}`)
+      }
+    } catch {
+      setSuccessMessage(`Akun aktif diubah ke ${acc}`)
+    }
   }
 
   const handleDelete = async (acc: string) => {

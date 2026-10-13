@@ -7,7 +7,7 @@ const ACTIVE_ACCOUNT_PREFIX = 'hris_active_account_'
  * Normalisasi format username TikTok (selalu diawali @, huruf kecil, tanpa spasi)
  */
 export function normalizeTiktokHandle(handle: string): string {
-  if (!handle) return '@wangigaya'
+  if (!handle) return ''
   let clean = handle.trim().toLowerCase()
   if (!clean.startsWith('@')) {
     clean = `@${clean}`
@@ -20,10 +20,11 @@ export function normalizeTiktokHandle(handle: string): string {
  * Misal "petualangansajak" -> "@petualangansajak", "Nurin Savira" -> "@wangigaya"
  */
 export function getDefaultHandleForProfile(nama?: string): string {
-  if (!nama) return '@wangigaya'
+  if (!nama) return '@petualangansajak'
   const lower = nama.trim().toLowerCase()
   if (lower.includes('nurin')) return '@wangigaya'
-  return normalizeTiktokHandle(lower)
+  if (lower.includes('petualangan')) return '@petualangansajak'
+  return normalizeTiktokHandle(lower) || '@petualangansajak'
 }
 
 /**
@@ -225,5 +226,52 @@ export function setActiveHostAccount(hostId: string, username: string): void {
         payload: { hostId, activeAccount: clean },
       })
     } catch {}
+  }
+}
+
+/**
+ * Sinkronkan seluruh data sesi live milik host di Supabase ke akun TikTok tertentu
+ * (Memperbarui seluruh sesi lama dari @wangigaya ke @petualangansajak secara realtime)
+ */
+export async function syncHostSessionsAccount(
+  hostId: string,
+  targetAccount: string,
+  sessionIds?: string[]
+): Promise<{ success: boolean; updatedCount: number; error?: string }> {
+  const clean = normalizeTiktokHandle(targetAccount)
+  if (!clean) {
+    return { success: false, updatedCount: 0, error: 'Target akun tidak valid' }
+  }
+
+  try {
+    let query = supabase.from('laporan_tiktok').update({ akun_tiktok: clean })
+
+    if (sessionIds && sessionIds.length > 0) {
+      query = query.in('id', sessionIds)
+    } else if (hostId) {
+      query = query.eq('host_id', hostId)
+    }
+
+    const { data, error } = await query.select('id')
+
+    if (error) {
+      console.warn('Sync host sessions notice:', error.message)
+      throw error
+    }
+
+    // Broadcast event
+    try {
+      const channel = supabase.channel('realtime_host_accounts')
+      channel.send({
+        type: 'broadcast',
+        event: 'sessions_account_synced',
+        payload: { hostId, syncedAccount: clean, count: data?.length || 0 },
+      })
+    } catch {}
+
+    return { success: true, updatedCount: data?.length || 0 }
+  } catch (err: any) {
+    console.error('Error syncing host sessions account:', err)
+    return { success: false, updatedCount: 0, error: err.message || 'Gagal sinkronisasi sesi' }
   }
 }

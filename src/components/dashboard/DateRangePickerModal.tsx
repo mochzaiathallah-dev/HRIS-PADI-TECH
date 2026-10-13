@@ -20,6 +20,8 @@ interface DateRangePickerModalProps {
   allReports: LaporanTiktok[]
   currentAccount?: string
   hostName?: string
+  hostAccounts?: string[]
+  onSyncAllReportsToAccount?: (account: string) => Promise<void>
 }
 
 const MONTH_NAMES = [
@@ -32,14 +34,38 @@ export const DateRangePickerModal: React.FC<DateRangePickerModalProps> = ({
   isOpen,
   onClose,
   allReports,
-  currentAccount = '@wangigaya',
+  currentAccount = '@petualangansajak',
+  hostAccounts = [],
+  onSyncAllReportsToAccount,
 }) => {
   // Rentang default: 1 bulan terakhir atau 21 Sep - 8 Okt 2026 (sesuai referensi)
   const [startDate, setStartDate] = useState<string>('2026-09-21')
   const [endDate, setEndDate] = useState<string>('2026-10-08')
-  const [selectedAccount, setSelectedAccount] = useState<string>(currentAccount)
+  const [selectedAccount, setSelectedAccount] = useState<string>(currentAccount || '@petualangansajak')
   const [isGenerating, setIsGenerating] = useState(false)
+  const [isSyncing, setIsSyncing] = useState(false)
   const [successNotice, setSuccessNotice] = useState<string | null>(null)
+
+  // Sinkronkan selectedAccount jika currentAccount dari parent berubah
+  React.useEffect(() => {
+    if (currentAccount) {
+      setSelectedAccount(currentAccount)
+    }
+  }, [currentAccount])
+
+  // Daftar akun yang tersedia (dari host, profil, dan laporan)
+  const availableAccountsList = useMemo(() => {
+    const set = new Set<string>()
+    if (currentAccount) set.add(currentAccount)
+    if (selectedAccount) set.add(selectedAccount)
+    hostAccounts.forEach((a) => {
+      if (a) set.add(a)
+    })
+    allReports.forEach((r) => {
+      if (r.akun_tiktok) set.add(r.akun_tiktok)
+    })
+    return Array.from(set)
+  }, [currentAccount, selectedAccount, hostAccounts, allReports])
 
   // Bulan aktif untuk navigasi kalender
   // Inisialisasi ke September 2026 agar langsung terlihat bulan September & Oktober
@@ -111,10 +137,14 @@ export const DateRangePickerModal: React.FC<DateRangePickerModalProps> = ({
 
     return allReports.filter((r) => {
       const inDateRange = r.tanggal >= startDate && r.tanggal <= effectiveEnd
-      const matchAcc = !selectedAccount || !r.akun_tiktok || r.akun_tiktok === selectedAccount
+      const matchAcc =
+        !selectedAccount ||
+        !r.akun_tiktok ||
+        r.akun_tiktok === selectedAccount ||
+        ((selectedAccount === currentAccount || !selectedAccount) && (!r.akun_tiktok || r.akun_tiktok === '@wangigaya'))
       return inDateRange && matchAcc
     }).sort((a, b) => a.tanggal.localeCompare(b.tanggal))
-  }, [allReports, startDate, endDate, selectedAccount])
+  }, [allReports, startDate, endDate, selectedAccount, currentAccount])
 
   // Agregasi metrik live yang terpilih
   const totalGMV = useMemo(
@@ -247,13 +277,19 @@ export const DateRangePickerModal: React.FC<DateRangePickerModalProps> = ({
         ]
       }
 
+      const exportAccount = selectedAccount || currentAccount || '@petualangansajak'
+      const mappedSessions = finalSessions.map((s) => ({
+        ...s,
+        akun_tiktok: exportAccount,
+      }))
+
       await generateTiktokSalesReportPDF({
         startDate,
         endDate: effectiveEnd,
-        akunTiktok: selectedAccount,
+        akunTiktok: exportAccount,
         tokoNama: 'BRM Mandiri',
         idToko: 'IDLCBUWLP8',
-        sessions: finalSessions,
+        sessions: mappedSessions,
       })
 
       setSuccessNotice(`Laporan PDF resmi ${formattedRangeText} berhasil diunduh ke perangkat Anda!`)
@@ -335,18 +371,52 @@ export const DateRangePickerModal: React.FC<DateRangePickerModalProps> = ({
 
           {/* Akun Filter */}
           <div className="space-y-1 pt-1">
-            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-              Akun Kreator
-            </span>
-            <div className="flex gap-2">
-              {['@wangigaya', '@paditech', '@gayahijab'].map((acc) => (
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                Akun Kreator
+              </span>
+              {onSyncAllReportsToAccount && selectedAccount && (
+                <button
+                  type="button"
+                  disabled={isSyncing}
+                  onClick={async () => {
+                    setIsSyncing(true)
+                    try {
+                      await onSyncAllReportsToAccount(selectedAccount)
+                      setSuccessNotice(`Seluruh sesi live berhasil disinkronkan ke akun ${selectedAccount}!`)
+                    } catch (err: any) {
+                      alert(err?.message || 'Gagal sinkronisasi sesi.')
+                    } finally {
+                      setIsSyncing(false)
+                    }
+                  }}
+                  className="text-[10px] text-rose-600 hover:underline font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  title="Perbarui seluruh sesi live lama agar tercatat di akun ini"
+                >
+                  <span>{isSyncing ? 'Menyinkronkan...' : '🔄 Sinkronkan Sesi ke Akun Ini'}</span>
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setSelectedAccount('')}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1 ${
+                  !selectedAccount
+                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-semibold'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400'
+                }`}
+              >
+                Semua Akun
+              </button>
+              {availableAccountsList.map((acc) => (
                 <button
                   key={acc}
                   type="button"
                   onClick={() => setSelectedAccount(acc)}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1 ${
                     selectedAccount === acc
-                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+                      ? 'bg-rose-500 text-white font-semibold shadow-xs'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400'
                   }`}
                 >

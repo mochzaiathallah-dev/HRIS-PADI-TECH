@@ -64,7 +64,7 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
   useEffect(() => {
     if (laporan) {
       reset({
-        akun_tiktok: laporan.akun_tiktok || '@wangigaya',
+        akun_tiktok: laporan.akun_tiktok || '@petualangansajak',
         tanggal: laporan.tanggal,
         durasi_menit: laporan.durasi_menit,
         gmv_rupiah: laporan.gmv_rupiah,

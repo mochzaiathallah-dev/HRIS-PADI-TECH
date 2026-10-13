@@ -5,7 +5,7 @@ import { LaporanTiktok } from '@/types'
 export interface GenerateTikTokReportParams {
   startDate: string // 'YYYY-MM-DD'
   endDate: string // 'YYYY-MM-DD'
-  akunTiktok?: string // default '@wangigaya'
+  akunTiktok?: string // default '@petualangansajak'
   tokoNama?: string // default 'BRM Mandiri'
   idToko?: string // default 'IDLCBUWLP8'
   sessions: LaporanTiktok[]
@@ -85,11 +85,13 @@ export async function generateTiktokSalesReportPDF(params: GenerateTikTokReportP
   const {
     startDate,
     endDate,
-    akunTiktok = '@wangigaya',
+    akunTiktok = '@petualangansajak',
     tokoNama = 'BRM Mandiri',
     idToko = 'IDLCBUWLP8',
     sessions = [],
   } = params
+
+  const targetAkun = (akunTiktok && akunTiktok.trim()) ? akunTiktok.trim() : '@petualangansajak'
 
   const doc = new jsPDF({
     orientation: 'portrait',
@@ -268,7 +270,7 @@ export async function generateTiktokSalesReportPDF(params: GenerateTikTokReportP
   doc.setFontSize(8.2)
   doc.setTextColor(colorSubText[0], colorSubText[1], colorSubText[2])
   doc.text(`Produk Khusus: Berkah Rosita Mandiri (BRM)  |  Periode: ${periodStr}`, pageWidth / 2, 23, { align: 'center' })
-  doc.text(`Toko: ${tokoNama}  |  ID Toko: ${idToko}  |  Akun Kreator: ${akunTiktok}`, pageWidth / 2, 27.5, { align: 'center' })
+  doc.text(`Toko: ${tokoNama}  |  ID Toko: ${idToko}  |  Akun Kreator: ${targetAkun}`, pageWidth / 2, 27.5, { align: 'center' })
 
   // Garis Pembatas Header Tebal
   doc.setDrawColor(colorDarkText[0], colorDarkText[1], colorDarkText[2])
@@ -748,7 +750,7 @@ export async function generateTiktokSalesReportPDF(params: GenerateTikTokReportP
   // -------------------------------------------------------------
   // SIMPAN FILE PDF SECARA OTOMATIS KE PERANGKAT PENGGUNA
   // -------------------------------------------------------------
-  const cleanAccount = akunTiktok.replace('@', '')
+  const cleanAccount = targetAkun.replace('@', '')
   const fileName = `Laporan Penjualan BRM - @${cleanAccount} (${periodStr}).pdf`
   doc.save(fileName)
 }

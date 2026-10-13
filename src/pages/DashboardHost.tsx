@@ -43,7 +43,8 @@ import { generateTiktokSalesReportPDF } from '@/lib/tiktokPdfExporter'
 import { 
   fetchHostAccounts, 
   getActiveHostAccount, 
-  getDefaultHandleForProfile 
+  getDefaultHandleForProfile,
+  syncHostSessionsAccount 
 } from '@/lib/hostAccountManager'
 
 export const DashboardHostPage: React.FC = () => {
@@ -63,6 +64,8 @@ export const DashboardHostPage: React.FC = () => {
   const [hostAccounts, setHostAccounts] = useState<string[]>([])
   const [activeAccount, setActiveAccount] = useState<string>('')
   const [isManageAccountsOpen, setIsManageAccountsOpen] = useState(false)
+  const [isSyncingSessions, setIsSyncingSessions] = useState(false)
+  const [syncSuccessMsg, setSyncSuccessMsg] = useState<string | null>(null)
 
   // State Laporan PDF Bulanan & Rentang Tanggal
   const [isDateRangeModalOpen, setIsDateRangeModalOpen] = useState(false)
@@ -87,14 +90,37 @@ export const DashboardHostPage: React.FC = () => {
     setHostAccounts(accounts)
     const active = getActiveHostAccount(user.id, profile?.nama)
     setActiveAccount(active)
-    if (!pdfAccount) {
-      setPdfAccount(active)
-    }
-  }, [user?.id, profile?.nama, pdfAccount])
+    setPdfAccount(active)
+  }, [user?.id, profile?.nama])
 
   useEffect(() => {
     loadAccounts()
   }, [loadAccounts])
+
+  // Auto-sinkronisasi: Jika host memiliki akun aktif selain @wangigaya (misal @petualangansajak),
+  // dan ada sesi di database yang masih berlabel @wangigaya, otomatis sinkronkan ke Supabase
+  useEffect(() => {
+    if (!user?.id || !activeAccount || activeAccount === '@wangigaya' || reports.length === 0) return
+
+    const hasOldAccountSessions = reports.some(
+      (r) => r.akun_tiktok === '@wangigaya' || !r.akun_tiktok
+    )
+
+    if (hasOldAccountSessions) {
+      const ids = reports.map((r) => r.id).filter(Boolean)
+      syncHostSessionsAccount(user.id, activeAccount, ids.length > 0 ? ids : undefined).then((res) => {
+        if (res.success && res.updatedCount > 0) {
+          setReports((prev) =>
+            prev.map((r) =>
+              r.akun_tiktok === '@wangigaya' || !r.akun_tiktok
+                ? { ...r, akun_tiktok: activeAccount }
+                : r
+            )
+          )
+        }
+      })
+    }
+  }, [user?.id, activeAccount, reports])
 
   // Watch Realtime Account Broadcasts
   useEffect(() => {
@@ -113,6 +139,12 @@ export const DashboardHostPage: React.FC = () => {
       .on('broadcast', { event: 'active_account_changed' }, (payload: any) => {
         if (payload?.payload?.hostId === user?.id && payload?.payload?.activeAccount) {
           setActiveAccount(payload.payload.activeAccount)
+          setPdfAccount(payload.payload.activeAccount)
+        }
+      })
+      .on('broadcast', { event: 'sessions_account_synced' }, (payload: any) => {
+        if (payload?.payload?.hostId === user?.id) {
+          fetchHostData()
         }
       })
       .subscribe()
@@ -303,14 +335,42 @@ export const DashboardHostPage: React.FC = () => {
   }, [reports])
   const totalJam = useMemo(() => (reports.reduce((acc, curr) => acc + (curr.durasi_menit || 0), 0) / 60).toFixed(1), [reports])
 
-  // Filter Laporan untuk Ekspor PDF Sesuai Rentang Tanggal
+  // Handler Sinkronkan Seluruh Sesi Host ke Akun Tertentu (Tersimpan realtime di Supabase)
+  const handleSyncAllSessions = async (targetAcc?: string) => {
+    if (!user?.id) return
+    const accToSync = targetAcc || pdfAccount || activeAccount || '@petualangansajak'
+    setIsSyncingSessions(true)
+    setSyncSuccessMsg(null)
+    try {
+      const ids = reports.map((r) => r.id).filter(Boolean)
+      const res = await syncHostSessionsAccount(user.id, accToSync, ids.length > 0 ? ids : undefined)
+      if (res.success) {
+        setSyncSuccessMsg(`Berhasil menyinkronkan seluruh sesi ke akun ${accToSync}!`)
+        setPdfAccount(accToSync)
+        setActiveAccount(accToSync)
+        setReports((prev) => prev.map((r) => ({ ...r, akun_tiktok: accToSync })))
+        await fetchHostData()
+      } else {
+        alert(res.error || 'Gagal menyinkronkan sesi live.')
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Gagal menyinkronkan sesi live.')
+    } finally {
+      setIsSyncingSessions(false)
+    }
+  }
+
+  // Filter Laporan untuk Ekspor PDF Sesuai Rentang Tanggal & Akun
   const pdfFilteredReports = useMemo(() => {
     return reports.filter((r) => {
       const inDate = r.tanggal >= pdfStartDate && r.tanggal <= pdfEndDate
-      const inAcc = !pdfAccount || !r.akun_tiktok || r.akun_tiktok === pdfAccount
+      const inAcc =
+        !pdfAccount ||
+        r.akun_tiktok === pdfAccount ||
+        (pdfAccount === activeAccount && (!r.akun_tiktok || r.akun_tiktok === '@wangigaya'))
       return inDate && inAcc
     }).sort((a, b) => a.tanggal.localeCompare(b.tanggal))
-  }, [reports, pdfStartDate, pdfEndDate, pdfAccount])
+  }, [reports, pdfStartDate, pdfEndDate, pdfAccount, activeAccount])
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col font-sans pb-16">
@@ -853,6 +913,39 @@ export const DashboardHostPage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Status Sinkronisasi Akun Aktif & Tombol Cepat Sinkronkan */}
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2">
+                  <AtSign className="h-4 w-4 text-rose-500 shrink-0" />
+                  <div>
+                    <span className="text-[11px] text-muted-foreground block">Akun Aktif Laporan:</span>
+                    <span className="text-xs font-bold text-slate-900 dark:text-white">
+                      {pdfAccount || activeAccount || '@petualangansajak'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {syncSuccessMsg && (
+                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                      {syncSuccessMsg}
+                    </span>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={isSyncingSessions}
+                    onClick={() => handleSyncAllSessions(pdfAccount || activeAccount)}
+                    className="h-8 text-xs border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 cursor-pointer gap-1.5"
+                    title="Perbarui seluruh riwayat sesi live di Supabase agar tersinkronkan ke akun ini"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${isSyncingSessions ? 'animate-spin' : ''}`} />
+                    <span>{isSyncingSessions ? 'Menyinkronkan...' : `Sinkronkan Seluruh Sesi ke ${pdfAccount || activeAccount || '@petualangansajak'}`}</span>
+                  </Button>
+                </div>
+              </div>
+
               {/* Tombol Cetak PDF Utama */}
               <div className="p-4 rounded-2xl bg-gradient-to-r from-rose-500 to-pink-600 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
@@ -861,7 +954,7 @@ export const DashboardHostPage: React.FC = () => {
                     Unduh Dokumen PDF Resmi 3 Halaman
                   </h4>
                   <p className="text-xs text-rose-100 mt-0.5">
-                    Format dokumen identik dengan template referensi Berkah Rosita Mandiri (BRM) @wangigaya.
+                    Format dokumen identik dengan template referensi Berkah Rosita Mandiri (BRM) {pdfAccount || activeAccount || '@petualangansajak'}.
                   </p>
                 </div>
 
@@ -872,43 +965,50 @@ export const DashboardHostPage: React.FC = () => {
                     setIsGeneratingTabPdf(true)
                     try {
                       let sessionsToExport = pdfFilteredReports
+                      const currentExportAccount = pdfAccount || activeAccount || '@petualangansajak'
+
                       if (sessionsToExport.length === 0 && pdfStartDate === '2026-09-21' && pdfEndDate === '2026-10-08') {
                         // Sample fallback data
                         sessionsToExport = [
-                          { id: '768787967', host_id: 'sample', tanggal: '2026-09-21', durasi_menit: 120, gmv_rupiah: 153009, tayangan: 250, impresi: 700, akun_tiktok: pdfAccount },
-                          { id: '768795746', host_id: 'sample', tanggal: '2026-09-21', durasi_menit: 90, gmv_rupiah: 72602, tayangan: 180, impresi: 520, akun_tiktok: pdfAccount },
-                          { id: '768824980', host_id: 'sample', tanggal: '2026-09-22', durasi_menit: 60, gmv_rupiah: 25599, tayangan: 120, impresi: 310, akun_tiktok: pdfAccount },
-                          { id: '768835271', host_id: 'sample', tanggal: '2026-09-22', durasi_menit: 110, gmv_rupiah: 87266, tayangan: 210, impresi: 640, akun_tiktok: pdfAccount },
-                          { id: '769010268', host_id: 'sample', tanggal: '2026-09-27', durasi_menit: 95, gmv_rupiah: 94936, tayangan: 300, impresi: 820, akun_tiktok: pdfAccount },
-                          { id: '769019036', host_id: 'sample', tanggal: '2026-09-27', durasi_menit: 180, gmv_rupiah: 420142, tayangan: 850, impresi: 2100, akun_tiktok: pdfAccount },
-                          { id: '769021749', host_id: 'sample', tanggal: '2026-09-27', durasi_menit: 75, gmv_rupiah: 21734, tayangan: 110, impresi: 290, akun_tiktok: pdfAccount },
-                          { id: '769037457', host_id: 'sample', tanggal: '2026-09-28', durasi_menit: 80, gmv_rupiah: 45765, tayangan: 160, impresi: 450, akun_tiktok: pdfAccount },
-                          { id: '769044993', host_id: 'sample', tanggal: '2026-09-28', durasi_menit: 65, gmv_rupiah: 24643, tayangan: 130, impresi: 380, akun_tiktok: pdfAccount },
-                          { id: '769039072', host_id: 'sample', tanggal: '2026-09-29', durasi_menit: 70, gmv_rupiah: 23916, tayangan: 140, impresi: 410, akun_tiktok: pdfAccount },
-                          { id: '769096132', host_id: 'sample', tanggal: '2026-09-29', durasi_menit: 115, gmv_rupiah: 59022, tayangan: 220, impresi: 610, akun_tiktok: pdfAccount },
-                          { id: '769121092', host_id: 'sample', tanggal: '2026-09-30', durasi_menit: 60, gmv_rupiah: 29320, tayangan: 150, impresi: 390, akun_tiktok: pdfAccount },
-                          { id: '769126266', host_id: 'sample', tanggal: '2026-09-30', durasi_menit: 90, gmv_rupiah: 79989, tayangan: 240, impresi: 680, akun_tiktok: pdfAccount },
-                          { id: '769093164', host_id: 'sample', tanggal: '2026-09-30', durasi_menit: 60, gmv_rupiah: 25855, tayangan: 130, impresi: 360, akun_tiktok: pdfAccount },
-                          { id: '769161668', host_id: 'sample', tanggal: '2026-10-01', durasi_menit: 85, gmv_rupiah: 49398, tayangan: 175, impresi: 490, akun_tiktok: pdfAccount },
-                          { id: '769166954', host_id: 'sample', tanggal: '2026-10-01', durasi_menit: 105, gmv_rupiah: 66696, tayangan: 230, impresi: 620, akun_tiktok: pdfAccount },
-                          { id: '769195949', host_id: 'sample', tanggal: '2026-10-02', durasi_menit: 75, gmv_rupiah: 43784, tayangan: 160, impresi: 430, akun_tiktok: pdfAccount },
-                          { id: '769223056', host_id: 'sample', tanggal: '2026-10-03', durasi_menit: 100, gmv_rupiah: 69081, tayangan: 245, impresi: 670, akun_tiktok: pdfAccount },
-                          { id: '769233394', host_id: 'sample', tanggal: '2026-10-03', durasi_menit: 60, gmv_rupiah: 25855, tayangan: 125, impresi: 340, akun_tiktok: pdfAccount },
-                          { id: '769241463', host_id: 'sample', tanggal: '2026-10-03', durasi_menit: 80, gmv_rupiah: 42216, tayangan: 170, impresi: 460, akun_tiktok: pdfAccount },
-                          { id: '769306309', host_id: 'sample', tanggal: '2026-10-05', durasi_menit: 90, gmv_rupiah: 45110, tayangan: 180, impresi: 490, akun_tiktok: pdfAccount },
-                          { id: '769389037', host_id: 'sample', tanggal: '2026-10-07', durasi_menit: 130, gmv_rupiah: 186393, tayangan: 420, impresi: 1100, akun_tiktok: pdfAccount },
-                          { id: '769376457', host_id: 'sample', tanggal: '2026-10-07', durasi_menit: 55, gmv_rupiah: 22337, tayangan: 115, impresi: 310, akun_tiktok: pdfAccount },
-                          { id: '769427308', host_id: 'sample', tanggal: '2026-10-08', durasi_menit: 65, gmv_rupiah: 24452, tayangan: 135, impresi: 360, akun_tiktok: pdfAccount },
+                          { id: '768787967', host_id: 'sample', tanggal: '2026-09-21', durasi_menit: 120, gmv_rupiah: 153009, tayangan: 250, impresi: 700, akun_tiktok: currentExportAccount },
+                          { id: '768795746', host_id: 'sample', tanggal: '2026-09-21', durasi_menit: 90, gmv_rupiah: 72602, tayangan: 180, impresi: 520, akun_tiktok: currentExportAccount },
+                          { id: '768824980', host_id: 'sample', tanggal: '2026-09-22', durasi_menit: 60, gmv_rupiah: 25599, tayangan: 120, impresi: 310, akun_tiktok: currentExportAccount },
+                          { id: '768835271', host_id: 'sample', tanggal: '2026-09-22', durasi_menit: 110, gmv_rupiah: 87266, tayangan: 210, impresi: 640, akun_tiktok: currentExportAccount },
+                          { id: '769010268', host_id: 'sample', tanggal: '2026-09-27', durasi_menit: 95, gmv_rupiah: 94936, tayangan: 300, impresi: 820, akun_tiktok: currentExportAccount },
+                          { id: '769019036', host_id: 'sample', tanggal: '2026-09-27', durasi_menit: 180, gmv_rupiah: 420142, tayangan: 850, impresi: 2100, akun_tiktok: currentExportAccount },
+                          { id: '769021749', host_id: 'sample', tanggal: '2026-09-27', durasi_menit: 75, gmv_rupiah: 21734, tayangan: 110, impresi: 290, akun_tiktok: currentExportAccount },
+                          { id: '769037457', host_id: 'sample', tanggal: '2026-09-28', durasi_menit: 80, gmv_rupiah: 45765, tayangan: 160, impresi: 450, akun_tiktok: currentExportAccount },
+                          { id: '769044993', host_id: 'sample', tanggal: '2026-09-28', durasi_menit: 65, gmv_rupiah: 24643, tayangan: 130, impresi: 380, akun_tiktok: currentExportAccount },
+                          { id: '769039072', host_id: 'sample', tanggal: '2026-09-29', durasi_menit: 70, gmv_rupiah: 23916, tayangan: 140, impresi: 410, akun_tiktok: currentExportAccount },
+                          { id: '769096132', host_id: 'sample', tanggal: '2026-09-29', durasi_menit: 115, gmv_rupiah: 59022, tayangan: 220, impresi: 610, akun_tiktok: currentExportAccount },
+                          { id: '769121092', host_id: 'sample', tanggal: '2026-09-30', durasi_menit: 60, gmv_rupiah: 29320, tayangan: 150, impresi: 390, akun_tiktok: currentExportAccount },
+                          { id: '769126266', host_id: 'sample', tanggal: '2026-09-30', durasi_menit: 90, gmv_rupiah: 79989, tayangan: 240, impresi: 680, akun_tiktok: currentExportAccount },
+                          { id: '769093164', host_id: 'sample', tanggal: '2026-09-30', durasi_menit: 60, gmv_rupiah: 25855, tayangan: 130, impresi: 360, akun_tiktok: currentExportAccount },
+                          { id: '769161668', host_id: 'sample', tanggal: '2026-10-01', durasi_menit: 85, gmv_rupiah: 49398, tayangan: 175, impresi: 490, akun_tiktok: currentExportAccount },
+                          { id: '769166954', host_id: 'sample', tanggal: '2026-10-01', durasi_menit: 105, gmv_rupiah: 66696, tayangan: 230, impresi: 620, akun_tiktok: currentExportAccount },
+                          { id: '769195949', host_id: 'sample', tanggal: '2026-10-02', durasi_menit: 75, gmv_rupiah: 43784, tayangan: 160, impresi: 430, akun_tiktok: currentExportAccount },
+                          { id: '769223056', host_id: 'sample', tanggal: '2026-10-03', durasi_menit: 100, gmv_rupiah: 69081, tayangan: 245, impresi: 670, akun_tiktok: currentExportAccount },
+                          { id: '769233394', host_id: 'sample', tanggal: '2026-10-03', durasi_menit: 60, gmv_rupiah: 25855, tayangan: 125, impresi: 340, akun_tiktok: currentExportAccount },
+                          { id: '769241463', host_id: 'sample', tanggal: '2026-10-03', durasi_menit: 80, gmv_rupiah: 42216, tayangan: 170, impresi: 460, akun_tiktok: currentExportAccount },
+                          { id: '769306309', host_id: 'sample', tanggal: '2026-10-05', durasi_menit: 90, gmv_rupiah: 45110, tayangan: 180, impresi: 490, akun_tiktok: currentExportAccount },
+                          { id: '769389037', host_id: 'sample', tanggal: '2026-10-07', durasi_menit: 130, gmv_rupiah: 186393, tayangan: 420, impresi: 1100, akun_tiktok: currentExportAccount },
+                          { id: '769376457', host_id: 'sample', tanggal: '2026-10-07', durasi_menit: 55, gmv_rupiah: 22337, tayangan: 115, impresi: 310, akun_tiktok: currentExportAccount },
+                          { id: '769427308', host_id: 'sample', tanggal: '2026-10-08', durasi_menit: 65, gmv_rupiah: 24452, tayangan: 135, impresi: 360, akun_tiktok: currentExportAccount },
                         ]
                       }
+
+                      const mappedExport = sessionsToExport.map((s) => ({
+                        ...s,
+                        akun_tiktok: currentExportAccount,
+                      }))
 
                       await generateTiktokSalesReportPDF({
                         startDate: pdfStartDate,
                         endDate: pdfEndDate,
-                        akunTiktok: pdfAccount,
+                        akunTiktok: currentExportAccount,
                         tokoNama: 'BRM Mandiri',
                         idToko: 'IDLCBUWLP8',
-                        sessions: sessionsToExport,
+                        sessions: mappedExport,
                       })
                     } catch (err: any) {
                       alert(err.message || 'Gagal membuat file PDF')
@@ -942,8 +1042,8 @@ export const DashboardHostPage: React.FC = () => {
                         <div className="space-y-0.5">
                           <div className="font-semibold text-slate-900 dark:text-white flex items-center gap-2">
                             <span>#{idx + 1} Sesi {s.tanggal}</span>
-                            <Badge variant="outline" className="text-[10px] py-0 px-1 bg-purple-50 text-purple-700">
-                              {s.akun_tiktok || '@wangigaya'}
+                            <Badge variant="outline" className="text-[10px] py-0 px-1 bg-purple-50 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300">
+                              {s.akun_tiktok || pdfAccount || activeAccount || '@petualangansajak'}
                             </Badge>
                           </div>
                           <div className="text-[11px] text-muted-foreground flex items-center gap-3">
@@ -1031,8 +1131,10 @@ export const DashboardHostPage: React.FC = () => {
         isOpen={isDateRangeModalOpen}
         onClose={() => setIsDateRangeModalOpen(false)}
         allReports={reports}
-        currentAccount={pdfAccount}
+        currentAccount={pdfAccount || activeAccount || '@petualangansajak'}
         hostName={profile?.nama}
+        hostAccounts={hostAccounts}
+        onSyncAllReportsToAccount={handleSyncAllSessions}
       />
 
       {/* Import Excel TikTok Modal */}
