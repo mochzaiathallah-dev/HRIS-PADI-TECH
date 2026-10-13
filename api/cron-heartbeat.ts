@@ -14,7 +14,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'Supabase configuration missing in environment variables' })
   }
 
-
   try {
     const supabase = createClient(supabaseUrl, supabaseKey, {
       auth: { persistSession: false }
@@ -22,21 +21,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const nowIso = new Date().toISOString()
 
-    // 1. CREATE: Insert 1 small pulse row into system_heartbeat
+    // 1. Guaranteed READ activity: Membaca tabel operasional agar database tidak idle/pause
+    const { data: readActivity, error: readActErr } = await supabase
+      .from('laporan_tiktok')
+      .select('id')
+      .limit(1)
+
+    // 2. CREATE (jika service role aktif): Insert 1 small pulse row into system_heartbeat
     const { data: inserted, error: insertErr } = await supabase
       .from('system_heartbeat')
       .insert({ status: 'midnight_alive' })
       .select('id, pinged_at')
       .single()
 
-    // 2. READ: Read latest heartbeat
+    // 3. READ: Read latest heartbeat
     const { data: latestRecord, error: readErr } = await supabase
       .from('system_heartbeat')
       .select('id, pinged_at, status')
       .order('id', { ascending: false })
       .limit(1)
 
-    // 3. DELETE / CLEANUP: Keep table ultra-lightweight (hapus riwayat > 7 hari)
+    // 4. DELETE / CLEANUP: Keep table ultra-lightweight (hapus riwayat > 7 hari)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
     await supabase
       .from('system_heartbeat')
@@ -46,8 +51,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({
       success: true,
       timestamp: nowIso,
-      message: 'Midnight CRUD Heartbeat executed successfully. Supabase active & 100% free plan safe.',
+      message: 'Midnight Keep-Alive Heartbeat executed successfully. Supabase active & 100% free plan safe.',
       data: {
+        activeQueryExecuted: !readActErr,
         inserted: inserted || null,
         latest: latestRecord || null,
         error: insertErr?.message || readErr?.message || null

@@ -61,6 +61,8 @@ export const DashboardHostPage: React.FC = () => {
   const [editTarget, setEditTarget] = useState<LaporanTiktok | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<LaporanTiktok | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isDeleteAllModalOpen, setIsDeleteAllModalOpen] = useState(false)
+  const [isDeletingAll, setIsDeletingAll] = useState(false)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
   const [isImportExcelOpen, setIsImportExcelOpen] = useState(false)
 
@@ -86,7 +88,7 @@ export const DashboardHostPage: React.FC = () => {
 
   useEffect(() => {
     fetchHostData()
-    const cleanupHeartbeat = setupMidnightHeartbeatWatcher()
+    const cleanupHeartbeat = setupMidnightHeartbeatWatcher(fetchHostData)
     return () => {
       cleanupHeartbeat()
     }
@@ -158,6 +160,38 @@ export const DashboardHostPage: React.FC = () => {
     }
   }
 
+  // Delete Semua Sesi Live Host (CRUD Realtime terupdate di Supabase)
+  const handleDeleteAllConfirm = async () => {
+    if (!user?.id || reports.length === 0) return
+    setIsDeletingAll(true)
+    try {
+      // 1. Direct delete dari Supabase
+      let { error } = await supabase
+        .from('laporan_tiktok')
+        .delete()
+        .eq('host_id', user.id)
+
+      // 2. Fallback delete by IDs jika RLS query memerlukan kecocokan id
+      if (error && reports.length > 0) {
+        const ids = reports.map((r) => r.id)
+        const res = await supabase.from('laporan_tiktok').delete().in('id', ids)
+        error = res.error
+      }
+
+      if (error) throw error
+
+      setReports([])
+      setIsDeleteAllModalOpen(false)
+      await fetchHostData()
+    } catch (err: any) {
+      console.error('Error deleting all live sessions:', err)
+      alert(err.message || 'Gagal menghapus semua sesi live streaming.')
+    } finally {
+      setIsDeletingAll(false)
+    }
+  }
+
+
   // Format Currency
   const formatRupiah = (val: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -182,6 +216,14 @@ export const DashboardHostPage: React.FC = () => {
 
   // Total Metrik Host
   const totalGMV = useMemo(() => reports.reduce((acc, curr) => acc + (curr.gmv_rupiah || 0), 0), [reports])
+  const totalKomisiBersih = useMemo(() => {
+    return reports.reduce((acc, curr) => {
+      const val = typeof curr.komisi_bersih === 'number' && curr.komisi_bersih > 0
+        ? curr.komisi_bersih
+        : Math.round((curr.gmv_rupiah || 0) * 0.1) // Default rate 10%
+      return acc + val
+    }, 0)
+  }, [reports])
   const totalJam = useMemo(() => (reports.reduce((acc, curr) => acc + (curr.durasi_menit || 0), 0) / 60).toFixed(1), [reports])
 
   // Filter Laporan untuk Ekspor PDF Sesuai Rentang Tanggal
@@ -279,6 +321,10 @@ export const DashboardHostPage: React.FC = () => {
               <div className="text-xs font-bold text-emerald-300">{formatRupiah(totalGMV)}</div>
             </div>
             <div className="px-3 py-1.5 rounded-xl bg-white/10 backdrop-blur border border-white/20 text-right">
+              <div className="text-[10px] text-pink-200">Komisi Bersih Cair</div>
+              <div className="text-xs font-bold text-amber-300">{formatRupiah(totalKomisiBersih)}</div>
+            </div>
+            <div className="px-3 py-1.5 rounded-xl bg-white/10 backdrop-blur border border-white/20 text-right">
               <div className="text-[10px] text-pink-200">Total Live</div>
               <div className="text-xs font-bold text-white">{totalJam} Jam</div>
             </div>
@@ -351,12 +397,12 @@ export const DashboardHostPage: React.FC = () => {
                   </CardDescription>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setIsImportExcelOpen(true)}
-                    className="h-8 text-xs gap-1 text-emerald-700 border-emerald-200 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400"
+                    className="h-8 text-xs gap-1 text-emerald-700 border-emerald-200 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 cursor-pointer"
                     title="Impor sesi live dari file Excel (.xlsx) atau CSV TikTok Shop"
                   >
                     <FileSpreadsheet className="h-3 w-3 text-emerald-600" />
@@ -366,8 +412,25 @@ export const DashboardHostPage: React.FC = () => {
                   <Button
                     variant="outline"
                     size="sm"
+                    onClick={() => setIsDeleteAllModalOpen(true)}
+                    disabled={reports.length === 0 || isDeletingAll}
+                    className="h-8 text-xs gap-1 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/50 cursor-pointer disabled:opacity-50"
+                    title="Hapus semua sesi live streaming Anda dari database Supabase secara realtime"
+                  >
+                    <Trash2 className="h-3 w-3 text-red-500" />
+                    <span>Hapus Semua</span>
+                    {reports.length > 0 && (
+                      <span className="ml-0.5 px-1.5 py-0.2 rounded-full bg-red-100 text-red-700 text-[10px] font-bold dark:bg-red-900/60 dark:text-red-300">
+                        {reports.length}
+                      </span>
+                    )}
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={fetchHostData}
-                    className="h-8 text-xs gap-1"
+                    className="h-8 text-xs gap-1 cursor-pointer"
                   >
                     <RefreshCw className={`h-3 w-3 ${isLoading ? 'animate-spin' : ''}`} />
                     Refresh
@@ -419,6 +482,9 @@ export const DashboardHostPage: React.FC = () => {
                           </Badge>
                           <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-emerald-50 text-emerald-700 border-emerald-300 font-bold">
                             GMV: {formatRupiah(item.gmv_rupiah)}
+                          </Badge>
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 font-bold">
+                            💰 Komisi Cair: {formatRupiah(item.komisi_bersih != null && item.komisi_bersih > 0 ? item.komisi_bersih : Math.round(item.gmv_rupiah * 0.1))}
                           </Badge>
                         </div>
 
@@ -775,7 +841,7 @@ export const DashboardHostPage: React.FC = () => {
         laporan={editTarget}
       />
 
-      {/* Delete Confirm Modal */}
+      {/* Delete Confirm Modal (Single) */}
       <DeleteConfirmModal
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
@@ -783,6 +849,17 @@ export const DashboardHostPage: React.FC = () => {
         isDeleting={isDeleting}
         title="Hapus Laporan Live TikTok"
         description={`Apakah Anda yakin ingin menghapus laporan sesi live pada tanggal ${deleteTarget?.tanggal} (GMV: ${formatRupiah(deleteTarget?.gmv_rupiah || 0)})?`}
+      />
+
+      {/* Delete Confirm Modal (Semua Sesi Live) */}
+      <DeleteConfirmModal
+        isOpen={isDeleteAllModalOpen}
+        onClose={() => setIsDeleteAllModalOpen(false)}
+        onConfirm={handleDeleteAllConfirm}
+        isDeleting={isDeletingAll}
+        title="Hapus Semua Sesi Live Streaming?"
+        description={`Apakah Anda yakin ingin menghapus SEMUA (${reports.length}) sesi live streaming Anda dari database Supabase? Tindakan ini akan menghapus seluruh data sesi live Anda secara permanen.`}
+        itemName={`Total ${reports.length} sesi live • Akumulasi GMV ${formatRupiah(totalGMV)}`}
       />
 
       {/* Photo Preview Modal */}

@@ -42,6 +42,7 @@ export interface LaporanTiktok {
   tanggal: string
   durasi_menit: number
   gmv_rupiah: number
+  komisi_bersih?: number | null
   tayangan: number
   impresi: number
   foto_bukti_url?: string | null

@@ -127,7 +127,7 @@ export const DashboardTutorPage: React.FC = () => {
 
   useEffect(() => {
     fetchTutorData()
-    const cleanupHeartbeat = setupMidnightHeartbeatWatcher()
+    const cleanupHeartbeat = setupMidnightHeartbeatWatcher(fetchTutorData)
     return () => {
       cleanupHeartbeat()
     }

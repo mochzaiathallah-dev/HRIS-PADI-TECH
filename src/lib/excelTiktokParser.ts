@@ -8,6 +8,8 @@ export interface ParsedTiktokSession {
   waktu: string // 'HH:mm WIB'
   durasi_menit: number
   gmv_rupiah: number
+  komisi_bersih: number // Komisi Bersih Cair (Rp)
+  komisi_estimasi?: number
   produk_terjual: number
   tayangan: number
   impresi: number
@@ -20,6 +22,7 @@ export interface ParseTiktokResult {
   fileName: string
   totalRows: number
   totalGMVLive: number
+  totalKomisiBersih: number // Total Komisi Bersih Cair (Rp)
   totalGMVShowcase: number
   totalOrders: number
   liveSessions: ParsedTiktokSession[]
@@ -78,7 +81,7 @@ function parseOrderDateTime(dateStr: any): { date: string; time: string } {
 
 /**
  * Ekstraksi & Agregasi Otomatis dari File Excel (.xlsx, .xls) atau CSV (.csv)
- * Menghasilkan daftar sesi live teragregasi per ID Konten / Sesi
+ * Menghasilkan daftar sesi live teragregasi per ID Konten / Sesi dengan Komisi Bersih Cair
  */
 export async function parseTiktokOrderFile(file: File, defaultAccount: string = '@wangigaya'): Promise<ParseTiktokResult> {
   const fileName = file.name.toLowerCase()
@@ -109,6 +112,7 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
         fileName: file.name,
         totalRows: 0,
         totalGMVLive: 0,
+        totalKomisiBersih: 0,
         totalGMVShowcase: 0,
         totalOrders: 0,
         liveSessions: [],
@@ -134,6 +138,25 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
 
       const rawGMV = row['GMV'] || row['gmv'] || row['Nilai GMV'] || row['Total GMV'] || 0
       const gmv = parseIdrNumber(rawGMV)
+
+      // Komisi cair (Total penghasilan akhir / Komisi standar untuk order selesai)
+      const settledIncome = parseIdrNumber(
+        row['Total penghasilan akhir'] ||
+        row['Komisi standar'] ||
+        row['Penghasilan akhir'] ||
+        row['Komisi bersih'] ||
+        row['komisi_bersih'] ||
+        0
+      )
+
+      // Estimasi komisi (sebelum settlement/cair)
+      const estIncome = parseIdrNumber(
+        row['Perkiraan komisi standar'] ||
+        row['Estimasi komisi'] ||
+        row['Perkiraan komisi'] ||
+        0
+      )
+
       const qty = parseInt(String(row['Produk terjual'] || row['Items Sold'] || row['qty'] || '1'), 10) || 1
       const orderDateStr = row['Tanggal pesanan'] || row['Order Creation Time'] || row['tanggal'] || ''
       const dt = parseOrderDateTime(orderDateStr)
@@ -162,6 +185,8 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
             waktu: dt.time,
             durasi_menit: 60, // Default 60 menit per sesi
             gmv_rupiah: 0,
+            komisi_bersih: 0,
+            komisi_estimasi: 0,
             produk_terjual: 0,
             tayangan: estimatedViews,
             impresi: estimatedImpressions,
@@ -172,6 +197,8 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
 
         const session = sessionsMap.get(contentId)!
         session.gmv_rupiah += gmv
+        session.komisi_bersih += settledIncome
+        session.komisi_estimasi = (session.komisi_estimasi || 0) + estIncome
         session.produk_terjual += qty
         session.orderCount += 1
       } else {
@@ -179,8 +206,17 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
       }
     }
 
-    // Kalibrasi tayangan & impresi realistis berdasarkan total GMV per sesi
+    // Kalibrasi komisi, tayangan & impresi realistis per sesi
     for (const session of sessionsMap.values()) {
+      // Jika pesanan belum cair ke dompet (settled 0), gunakan perkiraan komisi standar atau 10% GMV
+      if (session.komisi_bersih === 0) {
+        if (session.komisi_estimasi && session.komisi_estimasi > 0) {
+          session.komisi_bersih = session.komisi_estimasi
+        } else if (session.gmv_rupiah > 0) {
+          session.komisi_bersih = Math.round(session.gmv_rupiah * 0.1) // Default rate 10%
+        }
+      }
+
       const baseViews = Math.max(120, Math.round(session.gmv_rupiah / 150))
       session.tayangan = baseViews + (session.produk_terjual * 15)
       session.impresi = Math.round(session.tayangan * 3.2)
@@ -191,11 +227,14 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
       return b.tanggal.localeCompare(a.tanggal)
     })
 
+    const totalKomisiBersih = liveSessions.reduce((acc, s) => acc + s.komisi_bersih, 0)
+
     return {
       success: true,
       fileName: file.name,
       totalRows: rawRows.length,
       totalGMVLive,
+      totalKomisiBersih,
       totalGMVShowcase,
       totalOrders,
       liveSessions,
@@ -207,6 +246,7 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
       fileName: file.name,
       totalRows: 0,
       totalGMVLive: 0,
+      totalKomisiBersih: 0,
       totalGMVShowcase: 0,
       totalOrders: 0,
       liveSessions: [],
@@ -217,7 +257,7 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
 
 /**
  * Simpan Batch Sesi TikTok Live ke Supabase laporan_tiktok
- * Otomatis menangani fallback kolom akun_tiktok jika belum dimigrasi di PostgreSQL
+ * Otomatis menangani fallback kolom komisi_bersih & akun_tiktok jika belum dimigrasi di PostgreSQL
  */
 export async function batchInsertTiktokSessions(
   hostId: string,
@@ -233,6 +273,7 @@ export async function batchInsertTiktokSessions(
     tanggal: s.tanggal,
     durasi_menit: s.durasi_menit || 60,
     gmv_rupiah: s.gmv_rupiah,
+    komisi_bersih: s.komisi_bersih,
     tayangan: s.tayangan || 0,
     impresi: s.impresi || 0,
     akun_tiktok: overrideAccount || s.akun_tiktok || '@wangigaya',
@@ -241,16 +282,41 @@ export async function batchInsertTiktokSessions(
   try {
     let { error } = await supabase.from('laporan_tiktok').insert(rows)
 
-    // Fallback jika database belum memiliki kolom akun_tiktok (Postgres 42703 / PostgREST PGRST204)
+    // Fallback cerdas jika database belum memiliki kolom komisi_bersih atau akun_tiktok
     if (
       error &&
       (error.code === '42703' ||
         error.code === 'PGRST204' ||
+        error.message?.includes('komisi_bersih') ||
         error.message?.includes('akun_tiktok'))
     ) {
-      const fallbackRows = rows.map(({ akun_tiktok, ...rest }) => rest)
+      const fallbackRows = rows.map((r: any) => {
+        const copy = { ...r }
+        if (error?.message?.includes('komisi_bersih') || error?.code === '42703') {
+          delete copy.komisi_bersih
+        }
+        if (error?.message?.includes('akun_tiktok')) {
+          delete copy.akun_tiktok
+        }
+        return copy
+      })
+
       const retry = await supabase.from('laporan_tiktok').insert(fallbackRows)
       error = retry.error
+
+      // Minimal safe fallback
+      if (error && (error.code === '42703' || error.code === 'PGRST204')) {
+        const minimalRows = rows.map(({ host_id, tanggal, durasi_menit, gmv_rupiah, tayangan, impresi }) => ({
+          host_id,
+          tanggal,
+          durasi_menit,
+          gmv_rupiah,
+          tayangan,
+          impresi,
+        }))
+        const retryMin = await supabase.from('laporan_tiktok').insert(minimalRows)
+        error = retryMin.error
+      }
     }
 
     if (error) {
@@ -262,4 +328,3 @@ export async function batchInsertTiktokSessions(
     return { success: false, insertedCount: 0, error: err.message || 'Koneksi database gagal.' }
   }
 }
-

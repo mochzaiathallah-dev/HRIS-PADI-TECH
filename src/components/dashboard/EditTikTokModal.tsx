@@ -27,6 +27,7 @@ const editTikTokSchema = z.object({
   tanggal: z.string().min(1, 'Tanggal sesi wajib diisi'),
   durasi_menit: z.coerce.number().min(1, 'Durasi live minimal 1 menit'),
   gmv_rupiah: z.coerce.number().min(0, 'GMV tidak boleh negatif'),
+  komisi_bersih: z.coerce.number().min(0, 'Komisi tidak boleh negatif').optional(),
   tayangan: z.coerce.number().min(0, 'Tayangan tidak boleh negatif'),
   impresi: z.coerce.number().min(0, 'Impresi tidak boleh negatif'),
 })
@@ -53,6 +54,7 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
   const {
     register,
     handleSubmit,
+    watch,
     reset,
     formState: { errors },
   } = useForm<EditTikTokFormValues>({
@@ -66,6 +68,9 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
         tanggal: laporan.tanggal,
         durasi_menit: laporan.durasi_menit,
         gmv_rupiah: laporan.gmv_rupiah,
+        komisi_bersih: laporan.komisi_bersih != null && laporan.komisi_bersih > 0
+          ? laporan.komisi_bersih
+          : Math.round((laporan.gmv_rupiah || 0) * 0.1),
         tayangan: laporan.tayangan,
         impresi: laporan.impresi,
       })
@@ -82,11 +87,12 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
     setSuccessMessage(null)
 
     try {
-      // 1. Jalankan Direct Update terlebih dahulu (mendukung seluruh kolom termasuk akun_tiktok)
+      // 1. Jalankan Direct Update terlebih dahulu (mendukung seluruh kolom termasuk akun_tiktok & komisi_bersih)
       const updatePayload: any = {
         tanggal: values.tanggal,
         durasi_menit: values.durasi_menit,
         gmv_rupiah: values.gmv_rupiah,
+        komisi_bersih: values.komisi_bersih != null ? values.komisi_bersih : Math.round(values.gmv_rupiah * 0.1),
         tayangan: values.tayangan,
         impresi: values.impresi,
         akun_tiktok: values.akun_tiktok,
@@ -97,8 +103,13 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
         .update(updatePayload)
         .eq('id', laporan.id)
 
-      if (error && (error.code === '42703' || error.message?.includes('akun_tiktok'))) {
-        delete updatePayload.akun_tiktok
+      if (error && (error.code === '42703' || error.message?.includes('komisi_bersih') || error.message?.includes('akun_tiktok'))) {
+        if (error.message?.includes('komisi_bersih') || error.code === '42703') {
+          delete updatePayload.komisi_bersih
+        }
+        if (error.message?.includes('akun_tiktok')) {
+          delete updatePayload.akun_tiktok
+        }
         const retry = await supabase
           .from('laporan_tiktok')
           .update(updatePayload)
@@ -248,6 +259,31 @@ export const EditTikTokModal: React.FC<EditTikTokModalProps> = ({
               />
               {errors.gmv_rupiah && (
                 <p className="text-[11px] text-red-500 font-medium">{errors.gmv_rupiah.message}</p>
+              )}
+            </div>
+
+            {/* Komisi Bersih Cair */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <DollarSign className="h-3.5 w-3.5 text-amber-500" />
+                  Komisi Bersih Cair (IDR)
+                </span>
+                <span className="text-[10px] text-muted-foreground font-normal">
+                  Estimasi 10%: Rp {Math.round((Number(watch('gmv_rupiah')) || 0) * 0.1).toLocaleString('id-ID')}
+                </span>
+              </Label>
+              <Input
+                type="number"
+                min="0"
+                step="any"
+                placeholder="Contoh: 150000"
+                className="text-xs font-mono"
+                disabled={isSubmitting}
+                {...register('komisi_bersih')}
+              />
+              {errors.komisi_bersih && (
+                <p className="text-[11px] text-red-500 font-medium">{errors.komisi_bersih.message}</p>
               )}
             </div>
 

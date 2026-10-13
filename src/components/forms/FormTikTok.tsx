@@ -401,12 +401,13 @@ export const FormTikTok: React.FC<FormTikTokProps> = ({
         }
       }
 
-      // B. Insert ke Tabel laporan_tiktok (Dengan Fallback Cerdas jika kolom akun_tiktok belum ada)
+      // B. Insert ke Tabel laporan_tiktok (Dengan Fallback Cerdas jika kolom komisi_bersih / akun_tiktok belum ada)
       const insertPayload: any = {
         host_id: user.id,
         tanggal: values.tanggal,
         durasi_menit: values.durasi_menit,
         gmv_rupiah: values.gmv_rupiah,
+        komisi_bersih: Math.round(values.gmv_rupiah * 0.1),
         tayangan: values.tayangan,
         impresi: values.impresi,
         foto_bukti_url: fotoBuktiUrl,
@@ -415,9 +416,20 @@ export const FormTikTok: React.FC<FormTikTokProps> = ({
 
       let { error: insertError } = await supabase.from('laporan_tiktok').insert(insertPayload)
 
-      // Fallback jika skema database belum memiliki kolom akun_tiktok (Postgres 42703 / PostgREST PGRST204)
-      if (insertError && (insertError.code === '42703' || insertError.code === 'PGRST204' || insertError.message?.includes('akun_tiktok'))) {
-        delete insertPayload.akun_tiktok
+      // Fallback jika skema database belum memiliki kolom komisi_bersih atau akun_tiktok
+      if (
+        insertError &&
+        (insertError.code === '42703' ||
+          insertError.code === 'PGRST204' ||
+          insertError.message?.includes('komisi_bersih') ||
+          insertError.message?.includes('akun_tiktok'))
+      ) {
+        if (insertError.message?.includes('komisi_bersih') || insertError.code === '42703') {
+          delete insertPayload.komisi_bersih
+        }
+        if (insertError.message?.includes('akun_tiktok')) {
+          delete insertPayload.akun_tiktok
+        }
         const retry = await supabase.from('laporan_tiktok').insert(insertPayload)
         insertError = retry.error
       }
@@ -950,12 +962,15 @@ export const FormTikTok: React.FC<FormTikTokProps> = ({
                   className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs space-y-2 shadow-sm"
                 >
                   <div className="flex items-center justify-between font-semibold">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-pink-600 dark:text-pink-400 font-bold text-sm">
                         {formatRupiah(Number(item.gmv_rupiah))}
                       </span>
                       <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-slate-600 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
                         {item.akun_tiktok || DEFAULT_TIKTOK_ACCOUNT}
+                      </Badge>
+                      <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-700 border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 font-semibold">
+                        Komisi: {formatRupiah(item.komisi_bersih != null && item.komisi_bersih > 0 ? item.komisi_bersih : Math.round(Number(item.gmv_rupiah || 0) * 0.1))}
                       </Badge>
                     </div>
 

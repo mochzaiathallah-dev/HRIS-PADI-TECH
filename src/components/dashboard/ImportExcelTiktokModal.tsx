@@ -281,26 +281,32 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
               </div>
 
               {/* KPI Cards */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
                   <span className="text-[10px] text-muted-foreground block">Total GMV Live</span>
                   <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
                     {formatRupiah(excelResult.totalGMVLive)}
                   </span>
                 </div>
-                <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
+                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-amber-100 dark:border-amber-900/60 text-center">
+                  <span className="text-[10px] text-muted-foreground block">Komisi Bersih</span>
+                  <span className="text-xs font-bold text-amber-600 dark:text-amber-400">
+                    {formatRupiah(excelResult.totalKomisiBersih)}
+                  </span>
+                </div>
+                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
                   <span className="text-[10px] text-muted-foreground block">Sesi Live</span>
                   <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
                     {excelResult.liveSessions.length} Sesi
                   </span>
                 </div>
-                <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
+                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
                   <span className="text-[10px] text-muted-foreground block">Produk Terjual</span>
                   <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
                     {excelResult.liveSessions.reduce((acc, s) => acc + s.produk_terjual, 0)} Pcs
                   </span>
                 </div>
-                <div className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
+                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center col-span-2 sm:col-span-1">
                   <span className="text-[10px] text-muted-foreground block">Pesanan Live</span>
                   <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
                     {excelResult.totalOrders} Order
@@ -325,10 +331,13 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
                         </Badge>
                         <span className="font-medium">{session.tanggal} {session.waktu}</span>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap justify-end">
                         <span className="text-slate-500">{session.produk_terjual} Pcs</span>
                         <span className="font-bold text-emerald-600 dark:text-emerald-400">
                           {formatRupiah(session.gmv_rupiah)}
+                        </span>
+                        <span className="text-[9px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/50 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-900">
+                          Komisi: {formatRupiah(session.komisi_bersih)}
                         </span>
                       </div>
                     </div>

@@ -32,6 +32,8 @@ export function exportTikTokToCSV(data: LaporanTiktok[], fileName: string = 'lap
     'Durasi (Menit)': item.durasi_menit,
     'GMV (Rupiah)': item.gmv_rupiah,
     'Format GMV': `Rp ${Number(item.gmv_rupiah).toLocaleString('id-ID')}`,
+    'Komisi Bersih Cair': item.komisi_bersih != null && item.komisi_bersih > 0 ? item.komisi_bersih : Math.round(Number(item.gmv_rupiah || 0) * 0.1),
+    'Format Komisi': `Rp ${Number(item.komisi_bersih != null && item.komisi_bersih > 0 ? item.komisi_bersih : Math.round(Number(item.gmv_rupiah || 0) * 0.1)).toLocaleString('id-ID')}`,
     Tayangan: item.tayangan,
     Impresi: item.impresi,
     'URL Bukti': item.foto_bukti_url || '-',

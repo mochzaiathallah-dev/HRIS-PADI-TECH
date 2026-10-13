@@ -162,7 +162,10 @@ export const DashboardPage: React.FC = () => {
       if (bimbelData) setBimbelList(bimbelData as unknown as LaporanBimbel[])
 
       // Fetch TikTok Reports
-      const { data: tiktokData, error: tiktokError } = await supabase
+      let tiktokData: any = null
+      let tiktokError: any = null
+
+      const firstTikTokAttempt = await supabase
         .from('laporan_tiktok')
         .select(`
           id,
@@ -170,13 +173,37 @@ export const DashboardPage: React.FC = () => {
           tanggal,
           durasi_menit,
           gmv_rupiah,
+          komisi_bersih,
           tayangan,
           impresi,
           foto_bukti_url,
+          akun_tiktok,
           created_at,
           host:host_id ( nama )
         `)
         .order('tanggal', { ascending: false })
+
+      if (firstTikTokAttempt.error) {
+        const fallbackTikTok = await supabase
+          .from('laporan_tiktok')
+          .select(`
+            id,
+            host_id,
+            tanggal,
+            durasi_menit,
+            gmv_rupiah,
+            tayangan,
+            impresi,
+            foto_bukti_url,
+            created_at,
+            host:host_id ( nama )
+          `)
+          .order('tanggal', { ascending: false })
+        tiktokData = fallbackTikTok.data
+        tiktokError = fallbackTikTok.error
+      } else {
+        tiktokData = firstTikTokAttempt.data
+      }
 
       if (tiktokError) console.warn('TikTok fetch warning:', tiktokError.message)
       if (tiktokData) setTiktokList(tiktokData as unknown as LaporanTiktok[])
@@ -208,7 +235,7 @@ export const DashboardPage: React.FC = () => {
   // 2. Realtime WebSocket Listener (Zero-Compute Realtime Sync on 4 Tables)
   useEffect(() => {
     fetchData()
-    const cleanupHeartbeat = setupMidnightHeartbeatWatcher()
+    const cleanupHeartbeat = setupMidnightHeartbeatWatcher(fetchData)
 
     const channel = supabase
       .channel('realtime_owner_full_sync')
@@ -1029,6 +1056,7 @@ export const DashboardPage: React.FC = () => {
                       <th className="p-3">Host Live</th>
                       <th className="p-3">Durasi</th>
                       <th className="p-3">GMV Penjualan</th>
+                      <th className="p-3">Komisi Bersih</th>
                       <th className="p-3">Tayangan (Views)</th>
                       <th className="p-3">Impresi</th>
                       <th className="p-3 text-center">Bukti GMV</th>
@@ -1038,7 +1066,7 @@ export const DashboardPage: React.FC = () => {
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {filteredTiktok.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="p-6 text-center text-muted-foreground">
+                        <td colSpan={10} className="p-6 text-center text-muted-foreground">
                           Tidak ditemukan data laporan TikTok pada kriteria ini.
                         </td>
                       </tr>
@@ -1055,6 +1083,9 @@ export const DashboardPage: React.FC = () => {
                           </td>
                           <td className="p-3 font-bold text-pink-600 dark:text-pink-400">
                             {formatRupiah(Number(item.gmv_rupiah))}
+                          </td>
+                          <td className="p-3 font-semibold text-amber-600 dark:text-amber-400">
+                            {formatRupiah(item.komisi_bersih != null && item.komisi_bersih > 0 ? item.komisi_bersih : Math.round(Number(item.gmv_rupiah || 0) * 0.1))}
                           </td>
                           <td className="p-3 text-slate-700 dark:text-slate-300">
                             {item.tayangan.toLocaleString('id-ID')}

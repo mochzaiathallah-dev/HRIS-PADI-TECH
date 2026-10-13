@@ -137,8 +137,14 @@ export async function generateTiktokSalesReportPDF(params: GenerateTikTokReportP
   const orderanMasuk = liveOrders + showcaseOrders
   const totalUnitTerjual = Math.round(totalProdukLive + showcaseOrders * 1.1)
 
-  // Estimasi Komisi Afiliasi Bersih (Rata-rata 7.65% dari GMV bruto)
-  const komisiBersihCair = Math.round(totalKeseluruhanGMV * 0.0765)
+  // Komisi Afiliasi Bersih (Gunakan data sesi riil jika ada, atau rasio standar 7.65% dari GMV)
+  const actualSettledFromSessions = sessions.reduce((acc, curr) => {
+    return acc + (typeof curr.komisi_bersih === 'number' && curr.komisi_bersih > 0 ? curr.komisi_bersih : 0)
+  }, 0)
+
+  const komisiBersihCair = actualSettledFromSessions > 0
+    ? actualSettledFromSessions
+    : Math.round(totalKeseluruhanGMV * 0.0765)
   const komisiTertunda = Math.round(totalKeseluruhanGMV * 0.0167)
   const komisiAwaiting = Math.round(totalKeseluruhanGMV * 0.002)
   const totalPotensiKomisi = komisiBersihCair + komisiTertunda + komisiAwaiting
