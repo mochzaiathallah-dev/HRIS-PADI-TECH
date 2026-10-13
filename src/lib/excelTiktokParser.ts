@@ -2,6 +2,13 @@ import * as XLSX from 'xlsx'
 import Papa from 'papaparse'
 import { supabase } from '@/lib/supabase'
 
+export interface TokoSummary {
+  name: string
+  count: number
+  gmv: number
+  isBrm: boolean
+}
+
 export interface ParsedTiktokSession {
   contentId: string
   tanggal: string // 'YYYY-MM-DD'
@@ -15,6 +22,9 @@ export interface ParsedTiktokSession {
   impresi: number
   akun_tiktok: string
   orderCount: number
+  nama_toko: string // 'Berkah Rosita Mandiri', 'Campur (Multi-Toko)', atau nama toko tertentu
+  tokoList: string[]
+  produkList: string[]
 }
 
 export interface ParseTiktokResult {
@@ -26,6 +36,9 @@ export interface ParseTiktokResult {
   totalGMVShowcase: number
   totalOrders: number
   liveSessions: ParsedTiktokSession[]
+  availableTokos: TokoSummary[]
+  selectedTokoFilter: string // 'all' | 'brm' | specific toko name
+  hasNonBrm: boolean
   error?: string
 }
 
@@ -81,16 +94,19 @@ function parseOrderDateTime(dateStr: any): { date: string; time: string } {
 
 /**
  * Ekstraksi & Agregasi Otomatis dari File Excel (.xlsx, .xls) atau CSV (.csv)
- * Menghasilkan daftar sesi live teragregasi per ID Konten / Sesi dengan Komisi Bersih Cair
+ * Mendukung filter Toko/Produk: 'all' (Campur), 'brm' (Khusus Berkah Rosita Mandiri), atau toko tertentu
  */
-export async function parseTiktokOrderFile(file: File, defaultAccount: string = '@wangigaya'): Promise<ParseTiktokResult> {
+export async function parseTiktokOrderFile(
+  file: File,
+  defaultAccount: string = '@wangigaya',
+  tokoFilter: string = 'all'
+): Promise<ParseTiktokResult> {
   const fileName = file.name.toLowerCase()
 
   try {
     let rawRows: any[] = []
 
     if (fileName.endsWith('.csv')) {
-      // Parse file CSV menggunakan PapaParse
       const text = await file.text()
       const parsed = Papa.parse(text, {
         header: true,
@@ -98,7 +114,6 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
       })
       rawRows = parsed.data as any[]
     } else {
-      // Parse file Excel (.xlsx / .xls) menggunakan XLSX
       const arrayBuffer = await file.arrayBuffer()
       const workbook = XLSX.read(arrayBuffer, { type: 'array' })
       const firstSheetName = workbook.SheetNames[0]
@@ -116,18 +131,55 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
         totalGMVShowcase: 0,
         totalOrders: 0,
         liveSessions: [],
+        availableTokos: [],
+        selectedTokoFilter: tokoFilter,
+        hasNonBrm: false,
         error: 'File Excel/CSV tidak memiliki data baris yang valid.',
       }
     }
+
+    // 1. Analisis Daftar Semua Toko di dalam file
+    const tokoMap = new Map<string, TokoSummary>()
+    let hasNonBrm = false
+
+    for (const row of rawRows) {
+      const tokoName = String(row['Nama toko'] || row['Shop Name'] || 'Lainnya').trim()
+      const gmv = parseIdrNumber(row['GMV'] || row['gmv'] || 0)
+      const isBrm = tokoName.toLowerCase().includes('berkah rosita') || tokoName.toLowerCase().includes('brm')
+      if (!isBrm) hasNonBrm = true
+
+      if (!tokoMap.has(tokoName)) {
+        tokoMap.set(tokoName, {
+          name: tokoName,
+          count: 0,
+          gmv: 0,
+          isBrm,
+        })
+      }
+      const t = tokoMap.get(tokoName)!
+      t.count += 1
+      t.gmv += gmv
+    }
+
+    const availableTokos = Array.from(tokoMap.values()).sort((a, b) => b.count - a.count)
+
+    // 2. Filter baris berdasarkan tokoFilter ('all', 'brm', atau nama toko spesifik)
+    const filteredRows = rawRows.filter((row) => {
+      if (tokoFilter === 'all') return true
+      const rowToko = String(row['Nama toko'] || row['Shop Name'] || '').trim().toLowerCase()
+      if (tokoFilter === 'brm') {
+        return rowToko.includes('berkah rosita') || rowToko.includes('brm')
+      }
+      return rowToko === tokoFilter.toLowerCase()
+    })
 
     const sessionsMap = new Map<string, ParsedTiktokSession>()
     let totalGMVLive = 0
     let totalGMVShowcase = 0
     let totalOrders = 0
 
-    // Iterasi setiap baris pesanan
-    for (const row of rawRows) {
-      // Cari kolom jenis konten secara fleksibel
+    // 3. Iterasi setiap baris yang lolos filter
+    for (const row of filteredRows) {
       const jenisKonten = String(
         row['Jenis Konten'] ||
         row['Content Type'] ||
@@ -139,7 +191,6 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
       const rawGMV = row['GMV'] || row['gmv'] || row['Nilai GMV'] || row['Total GMV'] || 0
       const gmv = parseIdrNumber(rawGMV)
 
-      // Komisi cair (Total penghasilan akhir / Komisi standar untuk order selesai)
       const settledIncome = parseIdrNumber(
         row['Total penghasilan akhir'] ||
         row['Komisi standar'] ||
@@ -149,7 +200,6 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
         0
       )
 
-      // Estimasi komisi (sebelum settlement/cair)
       const estIncome = parseIdrNumber(
         row['Perkiraan komisi standar'] ||
         row['Estimasi komisi'] ||
@@ -160,13 +210,14 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
       const qty = parseInt(String(row['Produk terjual'] || row['Items Sold'] || row['qty'] || '1'), 10) || 1
       const orderDateStr = row['Tanggal pesanan'] || row['Order Creation Time'] || row['tanggal'] || ''
       const dt = parseOrderDateTime(orderDateStr)
+      const tokoName = String(row['Nama toko'] || row['Shop Name'] || 'Berkah Rosita Mandiri').trim()
+      const productName = String(row['Nama produk'] || row['Product Name'] || '').trim()
 
       totalOrders += 1
 
       if (jenisKonten === 'LIVE' || !jenisKonten) {
         totalGMVLive += gmv
 
-        // Kelompokkan per ID Konten (Sesi Siaran LIVE)
         const contentId = String(
           row['ID Konten'] ||
           row['Content ID'] ||
@@ -175,7 +226,6 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
         ).trim()
 
         if (!sessionsMap.has(contentId)) {
-          // Estimasi tayangan & impresi realistis jika tidak tersedia di log order
           const estimatedViews = Math.max(120, Math.round(gmv / 180) + Math.floor(Math.random() * 80))
           const estimatedImpressions = Math.round(estimatedViews * 3.2)
 
@@ -183,7 +233,7 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
             contentId,
             tanggal: dt.date,
             waktu: dt.time,
-            durasi_menit: 60, // Default 60 menit per sesi
+            durasi_menit: 60,
             gmv_rupiah: 0,
             komisi_bersih: 0,
             komisi_estimasi: 0,
@@ -192,6 +242,9 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
             impresi: estimatedImpressions,
             akun_tiktok: defaultAccount,
             orderCount: 0,
+            nama_toko: tokoName,
+            tokoList: [],
+            produkList: [],
           })
         }
 
@@ -201,19 +254,34 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
         session.komisi_estimasi = (session.komisi_estimasi || 0) + estIncome
         session.produk_terjual += qty
         session.orderCount += 1
+
+        if (tokoName && !session.tokoList.includes(tokoName)) {
+          session.tokoList.push(tokoName)
+        }
+        if (productName && !session.produkList.includes(productName)) {
+          session.produkList.push(productName)
+        }
       } else {
         totalGMVShowcase += gmv
       }
     }
 
-    // Kalibrasi komisi, tayangan & impresi realistis per sesi
+    // 4. Kalibrasi nama toko, komisi & metrik per sesi
     for (const session of sessionsMap.values()) {
-      // Jika pesanan belum cair ke dompet (settled 0), gunakan perkiraan komisi standar atau 10% GMV
+      if (session.tokoList.length > 1) {
+        session.nama_toko = 'Campur (Multi-Toko)'
+      } else if (session.tokoList.length === 1) {
+        session.nama_toko = session.tokoList[0]
+      } else {
+        session.nama_toko = 'Berkah Rosita Mandiri'
+      }
+
+      // Jika komisi cair 0 tapi ada estimasi, gunakan estimasi atau default 10%
       if (session.komisi_bersih === 0) {
         if (session.komisi_estimasi && session.komisi_estimasi > 0) {
           session.komisi_bersih = session.komisi_estimasi
         } else if (session.gmv_rupiah > 0) {
-          session.komisi_bersih = Math.round(session.gmv_rupiah * 0.1) // Default rate 10%
+          session.komisi_bersih = Math.round(session.gmv_rupiah * 0.1)
         }
       }
 
@@ -222,7 +290,6 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
       session.impresi = Math.round(session.tayangan * 3.2)
     }
 
-    // Urutkan sesi live berdasarkan tanggal (terbaru di atas)
     const liveSessions = Array.from(sessionsMap.values()).sort((a, b) => {
       return b.tanggal.localeCompare(a.tanggal)
     })
@@ -232,12 +299,15 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
     return {
       success: true,
       fileName: file.name,
-      totalRows: rawRows.length,
+      totalRows: filteredRows.length,
       totalGMVLive,
       totalKomisiBersih,
       totalGMVShowcase,
       totalOrders,
       liveSessions,
+      availableTokos,
+      selectedTokoFilter: tokoFilter,
+      hasNonBrm,
     }
   } catch (err: any) {
     console.error('Error parsing TikTok Excel/CSV order file:', err)
@@ -250,6 +320,9 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
       totalGMVShowcase: 0,
       totalOrders: 0,
       liveSessions: [],
+      availableTokos: [],
+      selectedTokoFilter: tokoFilter,
+      hasNonBrm: false,
       error: err.message || 'Gagal membaca file Excel/CSV.',
     }
   }
@@ -257,7 +330,7 @@ export async function parseTiktokOrderFile(file: File, defaultAccount: string = 
 
 /**
  * Simpan Batch Sesi TikTok Live ke Supabase laporan_tiktok
- * Otomatis menangani fallback kolom komisi_bersih & akun_tiktok jika belum dimigrasi di PostgreSQL
+ * Menyimpan nama_toko, produk_terjual, komisi_bersih, dan akun_tiktok dengan fallback aman
  */
 export async function batchInsertTiktokSessions(
   hostId: string,
@@ -274,6 +347,11 @@ export async function batchInsertTiktokSessions(
     durasi_menit: s.durasi_menit || 60,
     gmv_rupiah: s.gmv_rupiah,
     komisi_bersih: s.komisi_bersih,
+    nama_toko: s.nama_toko || 'Berkah Rosita Mandiri',
+    produk_terjual: s.produk_terjual || 0,
+    catatan: s.nama_toko?.includes('Campur')
+      ? 'Produk: Campur (Multi-Toko)'
+      : `Toko: ${s.nama_toko || 'Berkah Rosita Mandiri'}`,
     tayangan: s.tayangan || 0,
     impresi: s.impresi || 0,
     akun_tiktok: overrideAccount || s.akun_tiktok || '@wangigaya',
@@ -282,22 +360,24 @@ export async function batchInsertTiktokSessions(
   try {
     let { error } = await supabase.from('laporan_tiktok').insert(rows)
 
-    // Fallback cerdas jika database belum memiliki kolom komisi_bersih atau akun_tiktok
+    // Fallback cerdas jika kolom opsional belum ada di PostgreSQL
     if (
       error &&
       (error.code === '42703' ||
         error.code === 'PGRST204' ||
+        error.message?.includes('nama_toko') ||
+        error.message?.includes('produk_terjual') ||
+        error.message?.includes('catatan') ||
         error.message?.includes('komisi_bersih') ||
         error.message?.includes('akun_tiktok'))
     ) {
       const fallbackRows = rows.map((r: any) => {
         const copy = { ...r }
-        if (error?.message?.includes('komisi_bersih') || error?.code === '42703') {
-          delete copy.komisi_bersih
-        }
-        if (error?.message?.includes('akun_tiktok')) {
-          delete copy.akun_tiktok
-        }
+        if (error?.message?.includes('nama_toko')) delete copy.nama_toko
+        if (error?.message?.includes('produk_terjual')) delete copy.produk_terjual
+        if (error?.message?.includes('catatan')) delete copy.catatan
+        if (error?.message?.includes('komisi_bersih') || error?.code === '42703') delete copy.komisi_bersih
+        if (error?.message?.includes('akun_tiktok')) delete copy.akun_tiktok
         return copy
       })
 

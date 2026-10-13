@@ -80,6 +80,8 @@ export const DashboardPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [filterMurid, setFilterMurid] = useState<string>('all')
   const [filterHost, setFilterHost] = useState<string>('all')
+  const [filterToko, setFilterToko] = useState<string>('all')
+  const [filterAccount, setFilterAccount] = useState<string>('all')
 
   // Modal States - Employee
   const [isAddEmployeeOpen, setIsAddEmployeeOpen] = useState(false)
@@ -178,6 +180,9 @@ export const DashboardPage: React.FC = () => {
           impresi,
           foto_bukti_url,
           akun_tiktok,
+          nama_toko,
+          produk_terjual,
+          catatan,
           created_at,
           host:host_id ( nama )
         `)
@@ -192,9 +197,11 @@ export const DashboardPage: React.FC = () => {
             tanggal,
             durasi_menit,
             gmv_rupiah,
+            komisi_bersih,
             tayangan,
             impresi,
             foto_bukti_url,
+            akun_tiktok,
             created_at,
             host:host_id ( nama )
           `)
@@ -334,13 +341,25 @@ export const DashboardPage: React.FC = () => {
     return tiktokList.filter((item) => {
       const matchMonth = selectedMonth ? item.tanggal.startsWith(selectedMonth) : true
       const matchHost = filterHost !== 'all' ? item.host_id === filterHost : true
+      const matchAccount = filterAccount !== 'all' ? item.akun_tiktok === filterAccount : true
+      const matchToko =
+        filterToko === 'all'
+          ? true
+          : filterToko === 'brm'
+          ? !item.nama_toko ||
+            item.nama_toko.toLowerCase().includes('berkah rosita') ||
+            item.nama_toko.toLowerCase().includes('brm')
+          : item.nama_toko === filterToko
+
       const matchSearch = searchQuery
         ? (item.host?.nama?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-           item.tanggal?.includes(searchQuery))
+           item.tanggal?.includes(searchQuery) ||
+           (item.akun_tiktok && item.akun_tiktok.toLowerCase().includes(searchQuery.toLowerCase())) ||
+           (item.nama_toko && item.nama_toko.toLowerCase().includes(searchQuery.toLowerCase())))
         : true
-      return matchMonth && matchHost && matchSearch
+      return matchMonth && matchHost && matchAccount && matchToko && matchSearch
     })
-  }, [tiktokList, selectedMonth, filterHost, searchQuery])
+  }, [tiktokList, selectedMonth, filterHost, filterAccount, filterToko, searchQuery])
 
   const filteredEmployees = useMemo(() => {
     return employeeList.filter((emp) => {
@@ -449,6 +468,22 @@ export const DashboardPage: React.FC = () => {
       }
     })
     return Array.from(hostsMap.entries()).map(([id, nama]) => ({ id, nama }))
+  }, [tiktokList])
+
+  const distinctTokos = useMemo(() => {
+    const set = new Set<string>()
+    tiktokList.forEach((t) => {
+      if (t.nama_toko && t.nama_toko.trim()) set.add(t.nama_toko.trim())
+    })
+    return Array.from(set)
+  }, [tiktokList])
+
+  const distinctAccounts = useMemo(() => {
+    const set = new Set<string>()
+    tiktokList.forEach((t) => {
+      if (t.akun_tiktok && t.akun_tiktok.trim()) set.add(t.akun_tiktok.trim())
+    })
+    return Array.from(set)
   }, [tiktokList])
 
   return (
@@ -1007,11 +1042,11 @@ export const DashboardPage: React.FC = () => {
         {activeTab === 'tiktok' && (
           <div className="space-y-4 animate-in fade-in">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <select
                   value={filterHost}
                   onChange={(e) => setFilterHost(e.target.value)}
-                  className="h-8 rounded-md border border-input bg-transparent px-2.5 text-xs shadow-sm focus:outline-none dark:bg-slate-900"
+                  className="h-8 rounded-md border border-input bg-background px-2.5 text-xs shadow-xs focus:outline-none dark:bg-slate-900"
                 >
                   <option value="all">Semua Host ({distinctHosts.length})</option>
                   {distinctHosts.map((h) => (
@@ -1019,6 +1054,35 @@ export const DashboardPage: React.FC = () => {
                       {h.nama}
                     </option>
                   ))}
+                </select>
+
+                <select
+                  value={filterAccount}
+                  onChange={(e) => setFilterAccount(e.target.value)}
+                  className="h-8 rounded-md border border-input bg-background px-2.5 text-xs shadow-xs focus:outline-none dark:bg-slate-900 font-mono"
+                >
+                  <option value="all">Semua Akun TikTok ({distinctAccounts.length})</option>
+                  {distinctAccounts.map((acc) => (
+                    <option key={acc} value={acc}>
+                      {acc}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={filterToko}
+                  onChange={(e) => setFilterToko(e.target.value)}
+                  className="h-8 rounded-md border border-input bg-background px-2.5 text-xs shadow-xs focus:outline-none dark:bg-slate-900"
+                >
+                  <option value="all">🌟 Semua Produk & Toko (Campur)</option>
+                  <option value="brm">🔴 Khusus Berkah Rosita Mandiri (BRM)</option>
+                  {distinctTokos
+                    .filter((t) => !t.toLowerCase().includes('berkah rosita') && !t.toLowerCase().includes('brm'))
+                    .map((toko) => (
+                      <option key={toko} value={toko}>
+                        🏪 {toko}
+                      </option>
+                    ))}
                 </select>
               </div>
 
@@ -1054,6 +1118,7 @@ export const DashboardPage: React.FC = () => {
                       <th className="p-3 w-10 text-center">No</th>
                       <th className="p-3">Tanggal</th>
                       <th className="p-3">Host Live</th>
+                      <th className="p-3">Toko / Produk</th>
                       <th className="p-3">Durasi</th>
                       <th className="p-3">GMV Penjualan</th>
                       <th className="p-3">Komisi Bersih</th>
@@ -1066,7 +1131,7 @@ export const DashboardPage: React.FC = () => {
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {filteredTiktok.length === 0 ? (
                       <tr>
-                        <td colSpan={10} className="p-6 text-center text-muted-foreground">
+                        <td colSpan={11} className="p-6 text-center text-muted-foreground">
                           Tidak ditemukan data laporan TikTok pada kriteria ini.
                         </td>
                       </tr>
@@ -1076,7 +1141,24 @@ export const DashboardPage: React.FC = () => {
                           <td className="p-3 text-center text-muted-foreground">{idx + 1}</td>
                           <td className="p-3 font-medium whitespace-nowrap">{item.tanggal}</td>
                           <td className="p-3 font-semibold text-slate-900 dark:text-slate-100">
-                            {item.host?.nama || '-'}
+                            <div className="flex flex-col">
+                              <span>{item.host?.nama || '-'}</span>
+                              <span className="text-[10px] text-pink-600 font-mono font-medium">
+                                {item.akun_tiktok || '@wangigaya'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                {item.nama_toko || 'Berkah Rosita Mandiri (BRM)'}
+                              </span>
+                              {item.produk_terjual != null && item.produk_terjual > 0 && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  📦 {item.produk_terjual} Produk terjual
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="p-3 text-slate-700 dark:text-slate-300">
                             {item.durasi_menit} Menit

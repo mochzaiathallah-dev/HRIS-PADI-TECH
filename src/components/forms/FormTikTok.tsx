@@ -60,12 +60,18 @@ interface FormTikTokProps {
   onReportCreated?: () => void
   onEditReport?: (report: LaporanTiktok) => void
   onDeleteReport?: (report: LaporanTiktok) => void
+  availableAccounts?: string[]
+  activeAccount?: string
+  onOpenManageAccounts?: () => void
 }
 
 export const FormTikTok: React.FC<FormTikTokProps> = ({
   onReportCreated,
   onEditReport,
   onDeleteReport,
+  availableAccounts = ['@wangigaya', '@paditech', '@gayahijab'],
+  activeAccount,
+  onOpenManageAccounts,
 }) => {
   const { user } = useAuth()
   const [historyList, setHistoryList] = useState<LaporanTiktok[]>([])
@@ -84,9 +90,9 @@ export const FormTikTok: React.FC<FormTikTokProps> = ({
 
   const todayStr = new Date().toISOString().split('T')[0]
 
-  const savedAccount = typeof window !== 'undefined' 
+  const savedAccount = activeAccount || (typeof window !== 'undefined' 
     ? localStorage.getItem('last_akun_tiktok') || DEFAULT_TIKTOK_ACCOUNT 
-    : DEFAULT_TIKTOK_ACCOUNT
+    : DEFAULT_TIKTOK_ACCOUNT)
 
   const {
     register,
@@ -106,6 +112,13 @@ export const FormTikTok: React.FC<FormTikTokProps> = ({
       impresi: 0,
     },
   })
+
+  // Sinkronkan akun aktif jika berubah
+  useEffect(() => {
+    if (activeAccount) {
+      setValue('akun_tiktok', activeAccount, { shouldValidate: true })
+    }
+  }, [activeAccount, setValue])
 
   const currentGMV = watch('gmv_rupiah') || 0
   const currentDurasi = watch('durasi_menit') || 0
@@ -758,8 +771,8 @@ export const FormTikTok: React.FC<FormTikTokProps> = ({
                   {...register('akun_tiktok')}
                 />
                 {/* Sugesti Akun Cepat */}
-                <div className="flex flex-wrap gap-1 pt-0.5">
-                  {SUGGESTED_ACCOUNTS.map((acc) => (
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  {(availableAccounts && availableAccounts.length > 0 ? availableAccounts : SUGGESTED_ACCOUNTS).map((acc) => (
                     <button
                       key={acc}
                       type="button"
@@ -769,15 +782,25 @@ export const FormTikTok: React.FC<FormTikTokProps> = ({
                           localStorage.setItem('last_akun_tiktok', acc)
                         } catch {}
                       }}
-                      className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
+                      className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors cursor-pointer ${
                         currentAccount === acc
-                          ? 'bg-pink-600 text-white border-pink-600 font-semibold'
+                          ? 'bg-pink-600 text-white border-pink-600 font-semibold shadow-xs'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-pink-300'
                       }`}
                     >
                       {acc}
                     </button>
                   ))}
+                  {onOpenManageAccounts && (
+                    <button
+                      type="button"
+                      onClick={onOpenManageAccounts}
+                      className="text-[10px] px-2 py-0.5 rounded-md border border-dashed border-pink-300 text-pink-600 hover:bg-pink-50 dark:border-pink-800 dark:text-pink-400 font-semibold flex items-center gap-0.5 cursor-pointer"
+                      title="Tambah atau kelola akun TikTok host"
+                    >
+                      <span>+ Akun</span>
+                    </button>
+                  )}
                 </div>
                 {errors.akun_tiktok && (
                   <p className="text-[11px] text-red-500 font-medium">{errors.akun_tiktok.message}</p>

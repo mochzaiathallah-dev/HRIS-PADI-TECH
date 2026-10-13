@@ -43,6 +43,9 @@ export interface LaporanTiktok {
   durasi_menit: number
   gmv_rupiah: number
   komisi_bersih?: number | null
+  nama_toko?: string | null
+  produk_terjual?: number | null
+  catatan?: string | null
   tayangan: number
   impresi: number
   foto_bukti_url?: string | null
@@ -52,6 +55,14 @@ export interface LaporanTiktok {
   host?: {
     nama: string
   }
+}
+
+export interface AkunTiktokHost {
+  id: string
+  host_id: string
+  username: string
+  is_default?: boolean
+  created_at?: string
 }
 
 export interface AuthState {

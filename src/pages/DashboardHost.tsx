@@ -32,11 +32,19 @@ import {
   FileText,
   Download,
   Calendar,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Store,
+  Plus
 } from 'lucide-react'
 import { DateRangePickerModal } from '@/components/dashboard/DateRangePickerModal'
 import { ImportExcelTiktokModal } from '@/components/dashboard/ImportExcelTiktokModal'
+import { ManageAccountsModal } from '@/components/dashboard/ManageAccountsModal'
 import { generateTiktokSalesReportPDF } from '@/lib/tiktokPdfExporter'
+import { 
+  fetchHostAccounts, 
+  getActiveHostAccount, 
+  getDefaultHandleForProfile 
+} from '@/lib/hostAccountManager'
 
 export const DashboardHostPage: React.FC = () => {
   const { profile, user, signOut } = useAuth()
@@ -48,13 +56,19 @@ export const DashboardHostPage: React.FC = () => {
   const [reports, setReports] = useState<LaporanTiktok[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
+  const [selectedTokoFilter, setSelectedTokoFilter] = useState('all')
   const [realtimePulse, setRealtimePulse] = useState(false)
+
+  // Host TikTok Accounts State (Dinamis & Realtime CRUD di Supabase)
+  const [hostAccounts, setHostAccounts] = useState<string[]>([])
+  const [activeAccount, setActiveAccount] = useState<string>('')
+  const [isManageAccountsOpen, setIsManageAccountsOpen] = useState(false)
 
   // State Laporan PDF Bulanan & Rentang Tanggal
   const [isDateRangeModalOpen, setIsDateRangeModalOpen] = useState(false)
   const [pdfStartDate, setPdfStartDate] = useState('2026-09-21')
   const [pdfEndDate, setPdfEndDate] = useState('2026-10-08')
-  const [pdfAccount, setPdfAccount] = useState('@wangigaya')
+  const [pdfAccount, setPdfAccount] = useState('')
   const [isGeneratingTabPdf, setIsGeneratingTabPdf] = useState(false)
 
   // Modals
@@ -65,6 +79,48 @@ export const DashboardHostPage: React.FC = () => {
   const [isDeletingAll, setIsDeletingAll] = useState(false)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
   const [isImportExcelOpen, setIsImportExcelOpen] = useState(false)
+
+  // Load Host Accounts
+  const loadAccounts = useCallback(async () => {
+    if (!user?.id) return
+    const accounts = await fetchHostAccounts(user.id, profile?.nama)
+    setHostAccounts(accounts)
+    const active = getActiveHostAccount(user.id, profile?.nama)
+    setActiveAccount(active)
+    if (!pdfAccount) {
+      setPdfAccount(active)
+    }
+  }, [user?.id, profile?.nama, pdfAccount])
+
+  useEffect(() => {
+    loadAccounts()
+  }, [loadAccounts])
+
+  // Watch Realtime Account Broadcasts
+  useEffect(() => {
+    const channel = supabase
+      .channel('realtime_host_accounts_watcher')
+      .on('broadcast', { event: 'account_added' }, (payload: any) => {
+        if (payload?.payload?.hostId === user?.id) {
+          loadAccounts()
+        }
+      })
+      .on('broadcast', { event: 'account_removed' }, (payload: any) => {
+        if (payload?.payload?.hostId === user?.id) {
+          loadAccounts()
+        }
+      })
+      .on('broadcast', { event: 'active_account_changed' }, (payload: any) => {
+        if (payload?.payload?.hostId === user?.id && payload?.payload?.activeAccount) {
+          setActiveAccount(payload.payload.activeAccount)
+        }
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [user?.id, loadAccounts])
 
   // Fetch Host Live Reports
   const fetchHostData = useCallback(async () => {
@@ -201,18 +257,39 @@ export const DashboardHostPage: React.FC = () => {
     }).format(val)
   }
 
-  // Filtered Reports
+  // Unique Stores (Toko) from reports
+  const uniqueTokos = useMemo(() => {
+    const set = new Set<string>()
+    reports.forEach((r) => {
+      if (r.nama_toko && r.nama_toko.trim()) set.add(r.nama_toko.trim())
+    })
+    return Array.from(set)
+  }, [reports])
+
+  // Filtered Reports (Mendukung Pencarian & Filter Toko Produk)
   const filteredReports = useMemo(() => {
     const q = searchQuery.toLowerCase().trim()
     return reports.filter((r) => {
-      return (
+      const matchSearch =
+        !q ||
         r.tanggal.includes(q) ||
         r.durasi_menit.toString().includes(q) ||
         r.gmv_rupiah.toString().includes(q) ||
-        (r.akun_tiktok && r.akun_tiktok.toLowerCase().includes(q))
-      )
+        (r.akun_tiktok && r.akun_tiktok.toLowerCase().includes(q)) ||
+        (r.nama_toko && r.nama_toko.toLowerCase().includes(q))
+
+      const matchToko =
+        selectedTokoFilter === 'all'
+          ? true
+          : selectedTokoFilter === 'brm'
+          ? !r.nama_toko ||
+            r.nama_toko.toLowerCase().includes('berkah rosita') ||
+            r.nama_toko.toLowerCase().includes('brm')
+          : r.nama_toko === selectedTokoFilter
+
+      return matchSearch && matchToko
     })
-  }, [reports, searchQuery])
+  }, [reports, searchQuery, selectedTokoFilter])
 
   // Total Metrik Host
   const totalGMV = useMemo(() => reports.reduce((acc, curr) => acc + (curr.gmv_rupiah || 0), 0), [reports])
@@ -295,12 +372,21 @@ export const DashboardHostPage: React.FC = () => {
               <h2 className="text-base sm:text-lg font-bold truncate">
                 {profile?.nama || user?.email?.split('@')[0]}
               </h2>
-              <div className="text-[11px] text-pink-200 flex items-center gap-1.5 flex-wrap">
+              <div className="text-[11px] text-pink-200 flex items-center gap-2 flex-wrap mt-1">
                 <span>{reports.length} sesi live streaming tercatat</span>
                 <span>•</span>
-                <span className="inline-flex items-center gap-0.5 bg-white/15 px-2 py-0.5 rounded-full text-[10px] font-medium text-pink-100">
-                  <AtSign className="h-2.5 w-2.5" /> Akun: @wangigaya
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsManageAccountsOpen(true)}
+                  className="inline-flex items-center gap-1 bg-white/20 hover:bg-white/30 text-white px-2.5 py-0.5 rounded-full text-[10px] font-semibold border border-white/25 transition-all cursor-pointer shadow-xs"
+                  title="Klik untuk ganti akun aktif atau tambah akun TikTok baru"
+                >
+                  <AtSign className="h-2.5 w-2.5 text-pink-200" />
+                  <span>Akun: {activeAccount || getDefaultHandleForProfile(profile?.nama)}</span>
+                  <span className="text-[9px] bg-white/25 px-1 py-0.2 rounded ml-0.5 font-normal">
+                    ⚙️ Ganti / + Akun
+                  </span>
+                </button>
               </div>
             </div>
           </div>
@@ -378,6 +464,9 @@ export const DashboardHostPage: React.FC = () => {
               onReportCreated={fetchHostData}
               onEditReport={(rep) => setEditTarget(rep)}
               onDeleteReport={(rep) => setDeleteTarget(rep)}
+              availableAccounts={hostAccounts}
+              activeAccount={activeAccount}
+              onOpenManageAccounts={() => setIsManageAccountsOpen(true)}
             />
           </div>
         )}
@@ -438,16 +527,34 @@ export const DashboardHostPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Filter Search */}
-              <div className="pt-3">
-                <div className="relative">
+              {/* Filter Search & Toko */}
+              <div className="pt-3 flex flex-col sm:flex-row gap-2">
+                <div className="relative flex-1">
                   <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                   <Input
-                    placeholder="Cari tanggal sesi live (contoh: 2026-10)..."
+                    placeholder="Cari tanggal, akun, atau nama produk/toko..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="pl-8 text-xs h-8"
                   />
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Store className="h-3.5 w-3.5 text-slate-400 hidden sm:block" />
+                  <select
+                    value={selectedTokoFilter}
+                    onChange={(e) => setSelectedTokoFilter(e.target.value)}
+                    className="h-8 rounded-md border border-input bg-background px-2.5 text-xs shadow-xs focus:outline-none dark:bg-slate-900"
+                  >
+                    <option value="all">🌟 Semua Produk & Toko (Campur)</option>
+                    <option value="brm">🔴 Khusus Berkah Rosita Mandiri (BRM)</option>
+                    {uniqueTokos
+                      .filter((t) => !t.toLowerCase().includes('berkah rosita') && !t.toLowerCase().includes('brm'))
+                      .map((toko) => (
+                        <option key={toko} value={toko}>
+                          🏪 {toko}
+                        </option>
+                      ))}
+                  </select>
                 </div>
               </div>
             </CardHeader>
@@ -475,8 +582,18 @@ export const DashboardHostPage: React.FC = () => {
                             📅 {item.tanggal}
                           </span>
                           <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800">
-                            <AtSign className="h-2.5 w-2.5 mr-0.5" /> {item.akun_tiktok || '@wangigaya'}
+                            <AtSign className="h-2.5 w-2.5 mr-0.5" /> {item.akun_tiktok || activeAccount || '@petualangansajak'}
                           </Badge>
+                          {item.nama_toko && (
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800 font-medium">
+                              🏪 {item.nama_toko}
+                            </Badge>
+                          )}
+                          {item.produk_terjual != null && item.produk_terjual > 0 && (
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 font-medium">
+                              📦 {item.produk_terjual} Produk
+                            </Badge>
+                          )}
                           <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-pink-50 text-pink-700 border-pink-200">
                             <Clock className="h-2.5 w-2.5 mr-1" /> {item.durasi_menit} Menit
                           </Badge>
@@ -595,11 +712,31 @@ export const DashboardHostPage: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-semibold text-slate-500 block mb-1">
-                    Akun TikTok
-                  </label>
-                  <div className="flex gap-1.5">
-                    {['@wangigaya', '@paditech', '@gayahijab'].map((acc) => (
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-semibold text-slate-500 block">
+                      Akun TikTok
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setIsManageAccountsOpen(true)}
+                      className="text-[10px] text-rose-600 hover:underline flex items-center gap-0.5 cursor-pointer font-medium"
+                    >
+                      <Plus className="h-2.5 w-2.5" /> Kelola Akun
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setPdfAccount('')}
+                      className={`text-[10px] px-2 py-1 rounded-md border font-medium transition-colors cursor-pointer ${
+                        !pdfAccount
+                          ? 'bg-rose-500 text-white border-rose-500 font-semibold'
+                          : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      Semua Akun
+                    </button>
+                    {hostAccounts.map((acc) => (
                       <button
                         key={acc}
                         type="button"
@@ -613,6 +750,14 @@ export const DashboardHostPage: React.FC = () => {
                         {acc}
                       </button>
                     ))}
+                    <button
+                      type="button"
+                      onClick={() => setIsManageAccountsOpen(true)}
+                      className="text-[10px] px-2 py-1 rounded-md border border-dashed border-rose-300 text-rose-600 hover:bg-rose-50 dark:border-rose-700 dark:text-rose-400 font-semibold flex items-center gap-0.5 cursor-pointer"
+                      title="Tambah atau kelola akun TikTok host"
+                    >
+                      <Plus className="h-2.5 w-2.5" /> Akun
+                    </button>
                   </div>
                 </div>
               </div>
@@ -897,6 +1042,23 @@ export const DashboardHostPage: React.FC = () => {
         onSuccess={() => fetchHostData()}
         hostEmployees={profile ? [profile] : []}
         defaultHostId={user?.id}
+        defaultAccount={activeAccount}
+        hostAccounts={hostAccounts}
+      />
+
+      {/* Manage Host Accounts Modal (CRUD Realtime di Supabase) */}
+      <ManageAccountsModal
+        isOpen={isManageAccountsOpen}
+        onClose={() => setIsManageAccountsOpen(false)}
+        hostId={user?.id || ''}
+        profileName={profile?.nama}
+        currentAccounts={hostAccounts}
+        activeAccount={activeAccount}
+        onAccountsUpdated={(updated, newActive) => {
+          setHostAccounts(updated)
+          setActiveAccount(newActive)
+          setPdfAccount(newActive)
+        }}
       />
     </div>
   )
