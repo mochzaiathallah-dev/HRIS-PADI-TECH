@@ -7,13 +7,13 @@ const LAST_MIDNIGHT_CHECK_KEY = 'hris_padi_last_midnight_date'
  * Memastikan database Supabase selalu aktif (anti-pause) setiap hari jam 12 malam (00:00 WIB),
  * dengan query baca (READ) super ringan tanpa melebihi free tier Vercel & Supabase.
  */
-export async function triggerClientHeartbeatIfNeeded(): Promise<void> {
+export async function triggerClientHeartbeatIfNeeded(force: boolean = false): Promise<void> {
   try {
     const lastHeartbeat = localStorage.getItem(LAST_HEARTBEAT_KEY)
     const now = Date.now()
 
-    // Batasi pengecekan umum agar tidak berulang dalam 6 jam
-    if (lastHeartbeat) {
+    // Batasi pengecekan umum agar tidak berulang dalam 6 jam (kecuali jika force = true)
+    if (!force && lastHeartbeat) {
       const elapsedHours = (now - parseInt(lastHeartbeat, 10)) / (1000 * 60 * 60)
       if (elapsedHours < 6) {
         return
@@ -55,8 +55,8 @@ export function setupMidnightHeartbeatWatcher(onMidnightRefresh?: () => void): (
     if (hours === 0 && minutes <= 5 && lastMidnightDate !== todayDateStr) {
       try {
         localStorage.setItem(LAST_MIDNIGHT_CHECK_KEY, todayDateStr)
-        // Lakukan pembacaan database keep-alive
-        await triggerClientHeartbeatIfNeeded()
+        // Lakukan pembacaan database keep-alive dengan force = true
+        await triggerClientHeartbeatIfNeeded(true)
         // Refresh data dashboard secara realtime
         if (onMidnightRefresh) {
           onMidnightRefresh()

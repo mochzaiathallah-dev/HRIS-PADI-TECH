@@ -3,7 +3,8 @@ import { UserProfile } from '@/types'
 import { 
   parseTiktokOrderFile, 
   batchInsertTiktokSessions, 
-  ParseTiktokResult 
+  aggregateTiktokOrders,
+  ParseTiktokResult
 } from '@/lib/excelTiktokParser'
 import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -20,7 +21,9 @@ import {
   User, 
   AtSign,
   Store,
-  Filter
+  Filter,
+  Package,
+  Sparkles
 } from 'lucide-react'
 
 interface ImportExcelTiktokModalProps {
@@ -46,8 +49,8 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
     defaultHostId || (hostEmployees.length > 0 ? hostEmployees[0].id : '')
   )
   const [selectedAccount, setSelectedAccount] = useState<string>(defaultAccount)
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null)
-  const [selectedTokoFilter, setSelectedTokoFilter] = useState<string>('all')
+  const [filterMode, setFilterMode] = useState<'all' | 'brm' | 'toko' | 'product'>('all')
+  const [filterValue, setFilterValue] = useState<string>('all')
   const [excelResult, setExcelResult] = useState<ParseTiktokResult | null>(null)
   const [isParsing, setIsParsing] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -75,14 +78,14 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
     const file = e.target.files?.[0]
     if (!file) return
 
-    setUploadedFile(file)
-    setSelectedTokoFilter('all')
+    setFilterMode('all')
+    setFilterValue('all')
     setErrorMessage(null)
     setSuccessMessage(null)
     setIsParsing(true)
 
     try {
-      const result = await parseTiktokOrderFile(file, selectedAccount, 'all')
+      const result = await parseTiktokOrderFile(file, selectedAccount, 'all', 'all')
       if (!result.success || result.liveSessions.length === 0) {
         throw new Error(result.error || 'Tidak ditemukan data sesi LIVE valid dalam file Excel/CSV ini.')
       }
@@ -97,29 +100,32 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
     }
   }
 
-  const handleApplyTokoFilter = async (filterVal: string) => {
-    if (!uploadedFile) return
-    setSelectedTokoFilter(filterVal)
-    setIsParsing(true)
+  // Terapkan filter produk atau toko secara instan dan reaktif (0 ms)
+  const handleApplyFilter = (mode: 'all' | 'brm' | 'toko' | 'product', value: string) => {
+    if (!excelResult?.rawRows || excelResult.rawRows.length === 0) return
+
+    setFilterMode(mode)
+    setFilterValue(value)
     setErrorMessage(null)
 
     try {
-      const result = await parseTiktokOrderFile(uploadedFile, selectedAccount, filterVal)
-      if (!result.success) {
-        throw new Error(result.error || 'Gagal menerapkan filter produk/toko')
-      }
-      setExcelResult(result)
+      const updated = aggregateTiktokOrders(
+        excelResult.rawRows,
+        excelResult.fileName,
+        selectedAccount,
+        mode,
+        value
+      )
+      setExcelResult(updated)
     } catch (err: any) {
       console.error('Filter apply error:', err)
-      setErrorMessage(err.message || 'Gagal memfilter data produk.')
-    } finally {
-      setIsParsing(false)
+      setErrorMessage(err.message || 'Gagal menerapkan filter produk.')
     }
   }
 
   const handleConfirmImport = async () => {
     if (!excelResult || excelResult.liveSessions.length === 0) {
-      setErrorMessage('Pilih file Excel/CSV terlebih dahulu.')
+      setErrorMessage('Pilih file Excel/CSV atau filter produk yang memiliki sesi siaran live terlebih dahulu.')
       return
     }
 
@@ -143,7 +149,7 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
       }
 
       setSuccessMessage(
-        `Berhasil mengimpor ${res.insertedCount} sesi live TikTok (${selectedTokoFilter === 'brm' ? 'Khusus BRM' : 'Semua Produk'}) ke database Supabase! Data langsung sinkron realtime.`
+        `Berhasil mengimpor ${res.insertedCount} sesi live TikTok (${excelResult.filterLabel}) ke database Supabase! Data langsung sinkron realtime.`
       )
 
       setTimeout(() => {
@@ -159,9 +165,9 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
   }
 
   const resetFile = () => {
-    setUploadedFile(null)
     setExcelResult(null)
-    setSelectedTokoFilter('all')
+    setFilterMode('all')
+    setFilterValue('all')
     setErrorMessage(null)
     setSuccessMessage(null)
   }
@@ -181,7 +187,7 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
                   Impor Data TikTok Live (Excel / CSV)
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  Ekstraksi pesanan TikTok Shop: pilih produk BRM saja atau campur ke database Supabase
+                  Ekstraksi pesanan TikTok Shop: pilih produk BRM saja, produk spesifik, atau campur ke database Supabase
                 </CardDescription>
               </div>
             </div>
@@ -293,7 +299,7 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
                     Mengekstrak file Excel/CSV TikTok...
                   </p>
                   <p className="text-[10px] text-muted-foreground">
-                    Menghitung total GMV, agregasi per sesi live & produk terjual
+                    Menghitung total GMV, komisi, agregasi per sesi live & produk terjual
                   </p>
                 </div>
               ) : (
@@ -308,7 +314,7 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
                     Mendukung file .xlsx, .xls, dan .csv (contoh: affiliate_orders_...Petualangansajak.xlsx)
                   </p>
                   <p className="text-[10px] text-muted-foreground">
-                    Otomatis mengenali produk Berkah Rosita Mandiri maupun produk toko lain
+                    Otomatis mengenali produk Berkah Rosita Mandiri (800ml, 900ml, 1L, dll) maupun produk toko lain
                   </p>
                 </div>
               )}
@@ -325,7 +331,7 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
                       {excelResult.fileName}
                     </div>
                     <span className="text-[10px] text-muted-foreground">
-                      {excelResult.totalRows} baris pesanan • {excelResult.liveSessions.length} sesi siaran LIVE
+                      {excelResult.rawRows?.length || excelResult.totalRows} baris pesanan • {excelResult.liveSessions.length} sesi siaran LIVE
                     </span>
                   </div>
                 </div>
@@ -342,105 +348,174 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
                 </Button>
               </div>
 
-              {/* OPSI PILIHAN FILTER PRODUK / TOKO (BRM vs Campur Semua) */}
-              <div className="space-y-2 p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/60 shadow-xs">
-                <div className="flex items-center justify-between">
+              {/* OPSI PILIHAN FILTER PRODUK / TOKO */}
+              <div className="space-y-2.5 p-3 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/60 shadow-xs">
+                {/* Header Filter */}
+                <div className="flex items-center justify-between flex-wrap gap-1 pb-1 border-b border-slate-100 dark:border-slate-800">
                   <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                    <Store className="h-3.5 w-3.5 text-emerald-600" />
+                    <Package className="h-3.5 w-3.5 text-emerald-600" />
                     Pilihan Produk / Toko yang Disimpan:
                   </span>
-                  <Badge variant="outline" className="text-[10px] font-mono">
-                    Filter: {selectedTokoFilter === 'all' ? 'Semua (Campur)' : selectedTokoFilter === 'brm' ? 'Khusus BRM' : selectedTokoFilter}
+                  <Badge variant="outline" className="text-[10px] font-mono border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 truncate max-w-[240px]">
+                    Filter Aktif: {excelResult.filterLabel}
                   </Badge>
                 </div>
 
-                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {/* Baris 1: Tab Kategori Master */}
+                <div className="flex flex-wrap gap-1.5">
                   <button
                     type="button"
-                    onClick={() => handleApplyTokoFilter('all')}
+                    onClick={() => handleApplyFilter('all', 'all')}
                     disabled={isParsing || isSubmitting}
-                    className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all cursor-pointer ${
-                      selectedTokoFilter === 'all'
+                    className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all cursor-pointer flex items-center gap-1.5 ${
+                      filterMode === 'all'
                         ? 'bg-emerald-600 text-white border-emerald-600 font-bold shadow-xs'
                         : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 hover:border-emerald-400'
                     }`}
                   >
-                    🌟 Semua Toko & Produk (Campur)
+                    <span>🌟 Semua Produk & Toko (Campur)</span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => handleApplyTokoFilter('brm')}
+                    onClick={() => handleApplyFilter('brm', 'brm')}
                     disabled={isParsing || isSubmitting}
-                    className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all cursor-pointer ${
-                      selectedTokoFilter === 'brm'
+                    className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all cursor-pointer flex items-center gap-1.5 ${
+                      filterMode === 'brm'
                         ? 'bg-rose-600 text-white border-rose-600 font-bold shadow-xs'
                         : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 hover:border-rose-400'
                     }`}
                   >
-                    🔴 Khusus Berkah Rosita Mandiri (BRM)
+                    <span>🔴 Khusus Semua Varian BRM</span>
                   </button>
-
-                  {excelResult.hasNonBrm && (
-                    <select
-                      value={['all', 'brm'].includes(selectedTokoFilter) ? '' : selectedTokoFilter}
-                      onChange={(e) => {
-                        if (e.target.value) handleApplyTokoFilter(e.target.value)
-                      }}
-                      disabled={isParsing || isSubmitting}
-                      className="text-xs h-8 px-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none"
-                    >
-                      <option value="">Pilih Toko Spesifik...</option>
-                      {excelResult.availableTokos
-                        .filter((t) => !t.isBrm)
-                        .map((t) => (
-                          <option key={t.name} value={t.name}>
-                            {t.name} ({t.count} order • {formatRupiah(t.gmv)})
-                          </option>
-                        ))}
-                    </select>
-                  )}
                 </div>
 
-                <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 pt-0.5">
-                  <Filter className="h-3 w-3 text-slate-400" />
+                {/* Baris 2: Quick Product Pills (Pilihan Cepat Produk Unggulan) */}
+                {excelResult.availableProducts.length > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                      <Sparkles className="h-3 w-3 text-amber-500" />
+                      Pilih Cepat Produk Unggulan:
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {excelResult.availableProducts.slice(0, 5).map((prod) => {
+                        const isSelected = filterMode === 'product' && filterValue === prod.name
+                        return (
+                          <button
+                            key={prod.name}
+                            type="button"
+                            onClick={() => handleApplyFilter('product', prod.name)}
+                            disabled={isParsing || isSubmitting}
+                            className={`text-[11px] px-2.5 py-1 rounded-md border transition-all cursor-pointer flex items-center gap-1.5 ${
+                              isSelected
+                                ? 'bg-indigo-600 text-white border-indigo-600 font-bold shadow-xs ring-2 ring-indigo-300 dark:ring-indigo-800'
+                                : 'bg-slate-50 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400 hover:bg-indigo-50/50'
+                            }`}
+                          >
+                            <span>{prod.shortName}</span>
+                            <span className={`text-[9px] px-1 py-0.2 rounded font-mono ${
+                              isSelected ? 'bg-indigo-700 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                            }`}>
+                              {prod.sessionCount} Sesi • {formatRupiah(prod.gmv)}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Baris 3: Dropdowns untuk Pilih Produk Spesifik & Toko Spesifik */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  {/* Dropdown Semua Produk */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                      <Package className="h-3 w-3 text-indigo-500" />
+                      Pilih Produk Spesifik ({excelResult.availableProducts.length} Produk):
+                    </label>
+                    <select
+                      value={filterMode === 'product' ? filterValue : ''}
+                      onChange={(e) => {
+                        if (e.target.value) handleApplyFilter('product', e.target.value)
+                      }}
+                      disabled={isParsing || isSubmitting}
+                      className="w-full text-xs h-8 px-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      <option value="">-- Pilih Produk Spesifik --</option>
+                      {excelResult.availableProducts.map((p) => (
+                        <option key={p.name} value={p.name}>
+                          {p.isBrm ? '🔴 [BRM] ' : '🛍️ '} {p.shortName} — {formatRupiah(p.gmv)} ({p.qty} pcs • {p.sessionCount} sesi)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Dropdown Toko Spesifik */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                      <Store className="h-3 w-3 text-emerald-500" />
+                      Pilih Toko Spesifik ({excelResult.availableTokos.length} Toko):
+                    </label>
+                    <select
+                      value={filterMode === 'toko' ? filterValue : ''}
+                      onChange={(e) => {
+                        if (e.target.value) handleApplyFilter('toko', e.target.value)
+                      }}
+                      disabled={isParsing || isSubmitting}
+                      className="w-full text-xs h-8 px-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    >
+                      <option value="">-- Pilih Toko Spesifik --</option>
+                      {excelResult.availableTokos.map((t) => (
+                        <option key={t.name} value={t.name}>
+                          {t.isBrm ? '🔴 ' : '🏬 '} {t.name} — {formatRupiah(t.gmv)} ({t.count} order)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Penjelasan Filter yang Aktif */}
+                <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 pt-1 border-t border-slate-100 dark:border-slate-800/80">
+                  <Filter className="h-3 w-3 text-indigo-500 shrink-0" />
                   <span>
-                    {selectedTokoFilter === 'brm'
-                      ? 'Hanya menyimpan pesanan produk Berkah Rosita Mandiri (Pelicin & Pengharum 800ml, 900ml, 1L, dll).'
-                      : selectedTokoFilter === 'all'
-                      ? 'Menyimpan seluruh pesanan produk secara campur (BRM Rosita + toko Pixy, Hanasui, IRU KIDS, dll).'
-                      : `Hanya menyimpan pesanan dari toko ${selectedTokoFilter}.`}
+                    {filterMode === 'product'
+                      ? `Menyaring khusus produk "${excelResult.filterLabel}". GMV, Komisi, Sesi, Produk Terjual, dan Pesanan di bawah otomatis menyesuaikan produk ini.`
+                      : filterMode === 'brm'
+                      ? 'Menyaring semua produk Berkah Rosita Mandiri (Pelicin & Pengharum 800ml, 900ml, 1L, 200ml, dll).'
+                      : filterMode === 'toko'
+                      ? `Hanya menyaring pesanan dari toko "${filterValue}".`
+                      : 'Menyimpan seluruh pesanan produk secara campur tanpa filter.'}
                   </span>
                 </div>
               </div>
 
-              {/* KPI Cards */}
+              {/* 5 KPI Cards: GMV, Komisi Bersih, Sesi Live, Produk Terjual, Pesanan Live */}
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
+                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center transition-all hover:shadow-xs">
                   <span className="text-[10px] text-muted-foreground block">Total GMV Live</span>
                   <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
                     {formatRupiah(excelResult.totalGMVLive)}
                   </span>
                 </div>
-                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-amber-100 dark:border-amber-900/60 text-center">
+                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-amber-100 dark:border-amber-900/60 text-center transition-all hover:shadow-xs">
                   <span className="text-[10px] text-muted-foreground block">Komisi Bersih</span>
                   <span className="text-xs font-bold text-amber-600 dark:text-amber-400">
                     {formatRupiah(excelResult.totalKomisiBersih)}
                   </span>
                 </div>
-                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
+                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-indigo-100 dark:border-indigo-900/60 text-center transition-all hover:shadow-xs">
                   <span className="text-[10px] text-muted-foreground block">Sesi Live</span>
-                  <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                  <span className="text-xs font-bold text-indigo-700 dark:text-indigo-400">
                     {excelResult.liveSessions.length} Sesi
                   </span>
                 </div>
-                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center">
+                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center transition-all hover:shadow-xs">
                   <span className="text-[10px] text-muted-foreground block">Produk Terjual</span>
                   <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                    {excelResult.liveSessions.reduce((acc, s) => acc + s.produk_terjual, 0)} Pcs
+                    {excelResult.totalQty} Pcs
                   </span>
                 </div>
-                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center col-span-2 sm:col-span-1">
+                <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-900/60 text-center col-span-2 sm:col-span-1 transition-all hover:shadow-xs">
                   <span className="text-[10px] text-muted-foreground block">Pesanan Live</span>
                   <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
                     {excelResult.totalOrders} Order
@@ -454,43 +529,49 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
                   <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
                     Pratinjau Sesi Siaran ({excelResult.liveSessions.length} sesi siap diimpor):
                   </span>
-                  <span className="text-[10px] text-muted-foreground font-medium">
-                    Toko: {selectedTokoFilter === 'all' ? 'Campur' : selectedTokoFilter === 'brm' ? 'BRM' : selectedTokoFilter}
+                  <span className="text-[10px] text-muted-foreground font-medium truncate max-w-[220px]">
+                    Target: {excelResult.filterLabel}
                   </span>
                 </div>
                 <div className="max-h-40 overflow-y-auto space-y-1 pr-1 border border-slate-200 dark:border-slate-800 rounded-lg p-1.5 bg-white/70 dark:bg-slate-900/70">
-                  {excelResult.liveSessions.map((session, idx) => (
-                    <div
-                      key={session.contentId || idx}
-                      className="flex items-center justify-between text-[11px] p-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 hover:bg-emerald-50/50"
-                    >
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono shrink-0">
-                          #{idx + 1}
-                        </Badge>
-                        <div className="truncate">
-                          <span className="font-semibold text-slate-900 dark:text-slate-100">{session.tanggal}</span>
-                          <span className="text-slate-500 ml-1 text-[10px]">{session.waktu}</span>
-                        </div>
-                        <span className={`text-[9px] px-1.5 py-0.2 rounded font-medium shrink-0 ${
-                          session.nama_toko.includes('Campur')
-                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                            : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
-                        }`}>
-                          {session.nama_toko}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-wrap justify-end shrink-0">
-                        <span className="text-slate-500">{session.produk_terjual} Pcs</span>
-                        <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                          {formatRupiah(session.gmv_rupiah)}
-                        </span>
-                        <span className="text-[9px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/50 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-900">
-                          Komisi: {formatRupiah(session.komisi_bersih)}
-                        </span>
-                      </div>
+                  {excelResult.liveSessions.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-muted-foreground">
+                      Tidak ada sesi siaran LIVE yang menjual produk ini.
                     </div>
-                  ))}
+                  ) : (
+                    excelResult.liveSessions.map((session, idx) => (
+                      <div
+                        key={session.contentId || idx}
+                        className="flex items-center justify-between text-[11px] p-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 hover:bg-emerald-50/50 transition-colors"
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono shrink-0">
+                            #{idx + 1}
+                          </Badge>
+                          <div className="truncate">
+                            <span className="font-semibold text-slate-900 dark:text-slate-100">{session.tanggal}</span>
+                            <span className="text-slate-500 ml-1 text-[10px]">{session.waktu}</span>
+                          </div>
+                          <span className={`text-[9px] px-1.5 py-0.2 rounded font-medium shrink-0 truncate max-w-[140px] ${
+                            session.nama_toko.includes('Campur')
+                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                              : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                          }`}>
+                            {session.nama_toko}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap justify-end shrink-0">
+                          <span className="text-slate-500">{session.produk_terjual} Pcs</span>
+                          <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                            {formatRupiah(session.gmv_rupiah)}
+                          </span>
+                          <span className="text-[9px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/50 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-900">
+                            Komisi: {formatRupiah(session.komisi_bersih)}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -513,9 +594,9 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
           <Button
             type="button"
             size="sm"
-            disabled={!excelResult || isSubmitting || !selectedHostId}
+            disabled={!excelResult || excelResult.liveSessions.length === 0 || isSubmitting || !selectedHostId}
             onClick={handleConfirmImport}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer disabled:opacity-50"
           >
             {isSubmitting ? (
               <>
@@ -525,7 +606,7 @@ export const ImportExcelTiktokModal: React.FC<ImportExcelTiktokModalProps> = ({
             ) : (
               <>
                 <Zap className="h-3.5 w-3.5" />
-                Konfirmasi Impor {excelResult ? `${excelResult.liveSessions.length} Sesi (${selectedTokoFilter === 'brm' ? 'Khusus BRM' : 'Campur'})` : ''}
+                Konfirmasi Impor {excelResult ? `${excelResult.liveSessions.length} Sesi (${excelResult.filterLabel})` : ''}
               </>
             )}
           </Button>
